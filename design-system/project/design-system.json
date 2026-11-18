@@ -1,0 +1,70 @@
+{
+  "v": 3,
+  "assetGroups": {
+    "Logos": {
+      "files": {
+        "murmur-app-icon.svg": {
+          "blob": "ad5e2ec74d7c17825ab44227fbfbe9f5",
+          "name": "murmur-app-icon.svg",
+          "size": 723,
+          "type": "image/svg+xml"
+        },
+        "murmur-mark-mono-dark.svg": {
+          "blob": "926e790af9bc9adb038d1f401c3d6e0b",
+          "name": "murmur-mark-mono-dark.svg",
+          "size": 575,
+          "type": "image/svg+xml"
+        },
+        "murmur-mark-mono-light.svg": {
+          "blob": "6916db7e67663bf6415a631c7856b6b3",
+          "name": "murmur-mark-mono-light.svg",
+          "size": 577,
+          "type": "image/svg+xml"
+        },
+        "murmur-mark-night.svg": {
+          "blob": "19117f5547f23afd24e43604df46e0e2",
+          "name": "murmur-mark-night.svg",
+          "size": 573,
+          "type": "image/svg+xml"
+        },
+        "murmur-mark-paper.svg": {
+          "blob": "e1bb08077575e221183f90a1d3475639",
+          "name": "murmur-mark-paper.svg",
+          "size": 575,
+          "type": "image/svg+xml"
+        }
+      },
+      "name": "Logos",
+      "order": [
+        "murmur-app-icon.svg",
+        "murmur-mark-night.svg",
+        "murmur-mark-paper.svg",
+        "murmur-mark-mono-light.svg",
+        "murmur-mark-mono-dark.svg"
+      ],
+      "tile": "l"
+    }
+  },
+  "blobs": {},
+  "createdOnFiles": {
+    "at": "2026-11-18T12:00:00Z",
+    "v": 1
+  },
+  "docs": {
+    "sections": []
+  },
+  "groups": [
+    "Logos"
+  ],
+  "lastChange": {
+    "by": "Claude",
+    "at": "2026-11-18T13:00:00Z",
+    "via": "Claude Code",
+    "note": "Review fixes: contrast, lockup alignment, pill glow and width animation, clearer voice rule, WPF font guidance."
+  },
+  "layout": "files",
+  "libraries": [],
+  "namespace": "Murmur",
+  "sections": {},
+  "title": "Murmur Design System"
+}

@@ -1,0 +1,27 @@
+<!-- @dsCard group="Layout" height=270 -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Navigation</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Figtree:wght@400..700&family=JetBrains+Mono:wght@400..600&display=swap">
+<style>
+.side{width:208px;padding:var(--space-4) var(--space-3);background:var(--surface);border-right:1px solid var(--line);min-height:238px;box-sizing:border-box}
+</style>
+</head>
+<body class="mm-preview">
+<div class="side">
+  <span class="mm-lockup" style="--u:0.5px;margin:0 0 var(--space-4) var(--space-3)" role="img" aria-label="Murmur"><span class="mm-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span class="mm-wordmark" aria-hidden="true">murmur</span></span>
+  <nav class="mm-nav" aria-label="Main">
+    <button type="button" class="mm-nav-item" aria-current="page">Home</button>
+    <button type="button" class="mm-nav-item">Dictionary</button>
+    <button type="button" class="mm-nav-item">Snippets</button>
+    <button type="button" class="mm-nav-item">Style</button>
+    <button type="button" class="mm-nav-item">Settings</button>
+  </nav>
+</div>
+<script>
+document.querySelectorAll('.mm-nav-item').forEach(function (b) { b.addEventListener('click', function () { document.querySelectorAll('.mm-nav-item').forEach(function (x) { x.removeAttribute('aria-current'); }); b.setAttribute('aria-current', 'page'); }); });
+</script>
+</body>
+</html>

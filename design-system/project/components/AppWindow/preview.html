@@ -1,0 +1,69 @@
+<!-- @dsCard group="Screens" height=640 width=960 subtitle="Every component together on the Home page" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>App window</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Figtree:wght@400..700&family=JetBrains+Mono:wght@400..600&display=swap">
+<style>
+.win{display:grid;grid-template-columns:208px 1fr;width:960px;height:640px;background:var(--ground);overflow:hidden}
+.side{display:flex;flex-direction:column;padding:var(--space-6) var(--space-3) var(--space-4);background:var(--surface);border-right:1px solid var(--line)}
+.hint{margin-top:auto;padding:0 var(--space-3);display:flex;flex-direction:column;gap:var(--space-1)}
+.main{padding:var(--space-8);display:flex;flex-direction:column;gap:var(--space-6);min-width:0;overflow:hidden}
+.head{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--space-4)}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-4)}
+.listhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:calc(var(--space-4) * -1)}
+</style>
+</head>
+<body class="mm-preview">
+<div class="win">
+  <aside class="side">
+    <span class="mm-lockup" style="--u:0.5px;margin:0 0 var(--space-6) var(--space-3)" role="img" aria-label="Murmur"><span class="mm-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span class="mm-wordmark" aria-hidden="true">murmur</span></span>
+    <nav class="mm-nav" aria-label="Main">
+      <button type="button" class="mm-nav-item" aria-current="page">Home</button>
+      <button type="button" class="mm-nav-item">Dictionary</button>
+      <button type="button" class="mm-nav-item">Snippets</button>
+      <button type="button" class="mm-nav-item">Style</button>
+      <button type="button" class="mm-nav-item">Settings</button>
+    </nav>
+    <div class="hint">
+      <div class="mm-row" style="gap:var(--space-2)"><span class="mm-keys"><span class="mm-key">Ctrl</span>+<span class="mm-key">Win</span></span></div>
+      <span class="mm-help">Hold to dictate</span>
+    </div>
+  </aside>
+  <main class="main">
+    <header class="head">
+      <div>
+        <h1 class="display-lg" style="margin:0">Speak. It types.</h1>
+        <p class="mm-muted" style="margin:var(--space-2) 0 0">Click into any text field, hold the hotkey and talk.</p>
+      </div>
+      <span class="mm-tag mm-tag-script">Local model ready</span>
+    </header>
+    <section class="stats">
+      <div class="mm-stat mm-stat-lead"><span class="mm-stat-value">12,480</span><span class="mm-stat-label">words dictated</span></div>
+      <div class="mm-stat"><span class="mm-stat-value">142<small>wpm</small></span><span class="mm-stat-label">speaking speed</span></div>
+      <div class="mm-stat"><span class="mm-stat-value">318</span><span class="mm-stat-label">dictations</span></div>
+      <div class="mm-stat"><span class="mm-stat-value">3.6<small>h</small></span><span class="mm-stat-label">saved against typing</span></div>
+    </section>
+    <div class="listhead"><span class="overline mm-muted">HISTORY</span><button type="button" class="mm-btn mm-btn-ghost mm-btn-sm">Clear history</button></div>
+    <div class="mm-list">
+      <div class="mm-hist">
+        <div class="mm-hist-meta"><span class="mm-tag mm-tag-voice">Dictation</span><span class="mm-hist-app">slack</span><span>Tue 17 Nov, 14:02</span><span>12 words</span></div>
+        <p class="mm-hist-text">The new build is ready for testing. Please send feedback by Friday.</p>
+        <button type="button" class="mm-btn mm-btn-ghost mm-btn-sm mm-hist-action">Copy</button>
+      </div>
+      <div class="mm-hist">
+        <div class="mm-hist-meta"><span class="mm-tag mm-tag-command">Command</span><span class="mm-hist-app">outlook</span><span>Tue 17 Nov, 13:47</span><span>24 words</span></div>
+        <p class="mm-hist-text">Hi Mette, thanks for the quick turnaround. I have two small changes to the proposal and will send them over before lunch tomorrow.</p>
+        <button type="button" class="mm-btn mm-btn-ghost mm-btn-sm mm-hist-action">Copy</button>
+      </div>
+      <div class="mm-hist">
+        <div class="mm-hist-meta"><span class="mm-tag mm-tag-voice">Dictation</span><span class="mm-hist-app">chrome</span><span>Tue 17 Nov, 11:20</span><span>9 words</span></div>
+        <p class="mm-hist-text">Best pizza near the office that is open late</p>
+        <button type="button" class="mm-btn mm-btn-ghost mm-btn-sm mm-hist-action">Copy</button>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

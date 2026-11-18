@@ -1,0 +1,44 @@
+<!-- @dsCard group="Controls" height=380 -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Field</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Figtree:wght@400..700&family=JetBrains+Mono:wght@400..600&display=swap">
+<style>
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--space-6);align-items:start}
+</style>
+</head>
+<body class="mm-preview">
+<div class="mm-pad grid">
+  <div class="mm-stack">
+    <div class="mm-field">
+      <label class="mm-label" for="term">Term</label>
+      <input class="mm-input" id="term" value="Murmur">
+      <span class="mm-help">Spelled exactly like this every time.</span>
+    </div>
+    <div class="mm-field">
+      <label class="mm-label" for="key">API key</label>
+      <input class="mm-input mm-input-error" id="key" placeholder="Paste your key">
+      <span class="mm-help mm-help-error">Cloud transcription needs an API key.</span>
+    </div>
+    <div class="mm-field">
+      <span class="mm-label" id="engine-label">Speech recognition</span>
+      <div class="mm-seg" role="group" aria-labelledby="engine-label">
+        <button type="button" aria-pressed="true">On this PC</button>
+        <button type="button" aria-pressed="false">Cloud</button>
+      </div>
+    </div>
+  </div>
+  <div class="mm-card">
+    <div class="mm-setting"><div><div class="mm-label" id="s1">Remove filler words</div><div class="mm-help">Drops um and uh from what you say.</div></div><button type="button" class="mm-switch" role="switch" aria-checked="true" aria-labelledby="s1"></button></div>
+    <div class="mm-setting"><div><div class="mm-label" id="s2">Start and stop sounds</div><div class="mm-help">A short tone when recording begins and ends.</div></div><button type="button" class="mm-switch" role="switch" aria-checked="true" aria-labelledby="s2"></button></div>
+    <div class="mm-setting"><div><div class="mm-label" id="s3">Start with Windows</div><div class="mm-help">Murmur waits in the tray after you sign in.</div></div><button type="button" class="mm-switch" role="switch" aria-checked="false" aria-labelledby="s3"></button></div>
+  </div>
+</div>
+<script>
+document.querySelectorAll('.mm-switch').forEach(function (s) { s.addEventListener('click', function () { s.setAttribute('aria-checked', String(s.getAttribute('aria-checked') !== 'true')); }); });
+document.querySelectorAll('.mm-seg').forEach(function (g) { g.addEventListener('click', function (e) { if (e.target.tagName !== 'BUTTON') return; g.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b === e.target)); }); }); });
+</script>
+</body>
+</html>

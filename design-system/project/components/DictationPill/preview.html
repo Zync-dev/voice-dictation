@@ -1,0 +1,140 @@
+<!-- @dsCard group="Dictation" height=520 subtitle="The overlay shown at the bottom of the screen while you dictate" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dictation pill</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Figtree:wght@400..700&family=JetBrains+Mono:wght@400..600&display=swap">
+<style>
+  .stage { position: relative; height: 380px; margin: var(--space-4) var(--space-4) 0; border-radius: var(--radius-lg); border: 1px solid var(--line); background: var(--surface-sunken); overflow: hidden; }
+  /* a stand-in for whatever app the user is dictating into */
+  .doc { position: absolute; left: 50%; top: var(--space-6); width: min(560px, calc(100% - 48px)); transform: translateX(-50%); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); }
+  .doc-bar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--line); font: 500 12px/16px var(--font-mono); color: var(--ink-muted); }
+  .doc-body { padding: var(--space-4); min-height: 148px; font: 400 15px/24px var(--font-body); color: var(--ink); }
+  .doc-body .old { color: var(--ink-muted); }
+  .doc-body .new span { opacity: 0; transition: opacity 180ms ease-out, color 900ms ease-out; color: var(--script); }
+  .doc-body .new span.in { opacity: 1; }
+  .doc-body .new span.settled { color: var(--ink); }
+  .cursor { display: inline-block; width: 2px; height: 18px; margin-left: 1px; vertical-align: -3px; background: var(--voice); animation: mm-blink 1000ms steps(1) infinite; }
+  .dock { position: absolute; left: 0; right: 0; bottom: var(--space-6); display: flex; justify-content: center; }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-4); }
+  .controls .mm-seg { flex-wrap: wrap; }
+  .caption { margin-left: auto; }
+</style>
+</head>
+<body class="mm-preview">
+<div class="stage">
+  <div class="doc" aria-hidden="true">
+    <div class="doc-bar"><span>slack</span><span>·</span><span>#launch</span></div>
+    <div class="doc-body">
+      <span class="old">Morning all.</span>
+      <span class="new" id="typed"></span><span class="cursor"></span>
+    </div>
+  </div>
+  <div class="dock">
+    <div class="mm-pill-dock">
+      <div class="mm-pill" id="pill" data-state="rest" role="status" aria-live="polite">
+        <span class="mm-meter" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        <svg class="mm-pill-tick" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+        <span class="mm-pill-label" id="label"></span>
+        <span class="mm-pill-hint" id="hint"></span>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="controls">
+  <div class="mm-seg" id="states" role="group" aria-label="Pill state">
+    <button type="button" data-s="rest">Rest</button>
+    <button type="button" data-s="listening">Listening</button>
+    <button type="button" data-s="handsfree">Hands-free</button>
+    <button type="button" data-s="command">Command</button>
+    <button type="button" data-s="writing">Writing</button>
+    <button type="button" data-s="done">Inserted</button>
+    <button type="button" data-s="error">Error</button>
+  </div>
+  <button type="button" class="mm-btn mm-btn-primary mm-btn-sm" id="play">Play a dictation</button>
+  <span class="mm-help caption" id="caption"></span>
+</div>
+<script>
+(function () {
+  var pill = document.getElementById('pill'), label = document.getElementById('label'), hint = document.getElementById('hint');
+  var typed = document.getElementById('typed'), caption = document.getElementById('caption');
+  var buttons = document.querySelectorAll('#states button');
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var KEY = function (k) { return '<span class="mm-key">' + k + '</span>'; };
+  var COPY = {
+    rest:      { label: '', hint: '', note: 'Rest: a quiet nub so you know Murmur is ready.' },
+    listening: { label: 'Listening', hint: '', note: 'Hold the hotkey. The bars follow your voice.' },
+    handsfree: { label: 'Listening', hint: KEY('Esc') + ' cancel', note: 'Double-tap the hotkey to keep talking hands-free.' },
+    command:   { label: 'Command', hint: KEY('Esc') + ' cancel', note: 'Command mode: say what to do with the selected text.' },
+    writing:   { label: 'Writing', hint: '', note: 'Audio is being transcribed and cleaned up.' },
+    done:      { label: '+12 words', hint: '', note: 'Text has landed at the cursor. The pill returns to rest.' },
+    error:     { label: 'No microphone found', hint: '', note: 'Errors stay for four seconds and say what went wrong.' }
+  };
+  var PROFILE = [0.79, 0.52, 0.29, 0.52];   // the mark's own bar heights, so the meter is the logo
+  var state = 'rest', raf = 0, wipe = 0, timers = [], t0 = performance.now();
+
+  function setState(next) {
+    state = next;
+    pill.dataset.state = next;
+    // Keep the old words while they collapse, so the pill's width animates instead of snapping.
+    if (COPY[next].label) label.textContent = COPY[next].label;
+    if (COPY[next].hint) hint.innerHTML = COPY[next].hint;
+    clearTimeout(wipe);
+    wipe = setTimeout(function () { if (!COPY[state].label) label.textContent = ''; if (!COPY[state].hint) hint.innerHTML = ''; }, 380);
+    caption.textContent = COPY[next].note;
+    buttons.forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.s === next)); });
+    var live = next === 'listening' || next === 'handsfree' || next === 'command';
+    cancelAnimationFrame(raf);
+    if (live && !reduce) raf = requestAnimationFrame(tick);
+    else if (live) setLevel(0.6);
+    else { pill.style.removeProperty('--level'); for (var i = 1; i <= 4; i++) pill.style.removeProperty('--h' + i); }
+  }
+
+  // A plausible speech envelope: syllable bursts with short gaps.
+  function speech(t) {
+    var syll = Math.max(0, Math.sin(t * 0.011)) * (0.55 + 0.45 * Math.sin(t * 0.0031 + 1));
+    var breath = Math.sin(t * 0.0014) > -0.75 ? 1 : 0.08;
+    return Math.min(1, Math.abs(syll) * breath + 0.06);
+  }
+  function setLevel(level, t) {
+    pill.style.setProperty('--level', level.toFixed(3));
+    for (var i = 0; i < 4; i++) {
+      var jitter = t === undefined ? 1 : 0.75 + 0.25 * Math.sin(t * 0.02 + i * 1.7);
+      pill.style.setProperty('--h' + (i + 1), Math.min(1, level * PROFILE[i] * 1.25 * jitter + 0.04).toFixed(3));
+    }
+  }
+  function tick(now) { setLevel(speech(now - t0), now - t0); raf = requestAnimationFrame(tick); }
+
+  function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+  function later(ms, fn) { timers.push(setTimeout(fn, ms)); }
+
+  function typeOut(text) {
+    typed.textContent = '';
+    text.split(' ').forEach(function (word, i) {
+      var s = document.createElement('span');
+      s.textContent = ' ' + word;
+      typed.appendChild(s);
+      later(reduce ? 0 : 40 * i, function () { s.classList.add('in'); });
+      later(1400 + 40 * i, function () { s.classList.add('settled'); });
+    });
+  }
+
+  function play() {
+    clearTimers();
+    typed.textContent = '';
+    setState('rest');
+    later(500, function () { setState('listening'); });
+    later(3900, function () { setState('writing'); });
+    later(5300, function () { setState('done'); typeOut('The new build is ready for testing. Please send feedback by Friday.'); });
+    later(7300, function () { setState('rest'); });
+  }
+
+  buttons.forEach(function (b) { b.addEventListener('click', function () { clearTimers(); setState(b.dataset.s); }); });
+  document.getElementById('play').addEventListener('click', play);
+  setState('rest');
+  if (reduce) { setState('listening'); } else { play(); }
+})();
+</script>
+</body>
+</html>

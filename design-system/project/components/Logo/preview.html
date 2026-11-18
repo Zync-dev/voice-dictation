@@ -1,0 +1,54 @@
+<!-- @dsCard group="Brand" height=340 subtitle="Four sound bars and a caret" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Logo</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Figtree:wght@400..700&family=JetBrains+Mono:wght@400..600&display=swap">
+<style>
+  .grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: var(--space-4); padding: var(--space-4); }
+  .tile { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); display: flex; align-items: center; justify-content: center; min-height: 140px; position: relative; }
+  .tile.hero { grid-row: span 2; }
+  .tile.dark { background: var(--overlay-ground); }
+  .tile .note { position: absolute; left: var(--space-3); bottom: var(--space-2); }
+  .tile.dark .note { color: var(--overlay-muted); }
+  .sizes { display: flex; align-items: flex-end; gap: var(--space-6); }
+  /* the hero mark plays its meaning once: sound, then the caret */
+  .hero .mm-mark i { transform-origin: bottom; animation: rise 700ms var(--ease-spring) both; }
+  .hero .mm-mark i:nth-child(2) { animation-delay: 70ms; }
+  .hero .mm-mark i:nth-child(3) { animation-delay: 140ms; }
+  .hero .mm-mark i:nth-child(4) { animation-delay: 210ms; }
+  .hero .mm-mark i:nth-child(5) { animation: rise 500ms var(--ease-spring) 420ms both, mm-blink 1000ms steps(1) 1400ms 2; }
+  @keyframes rise { from { transform: scaleY(0.08); opacity: 0.3; } to { transform: scaleY(1); opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .hero .mm-mark i { animation: none !important; } }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body class="mm-preview">
+<div class="grid">
+  <div class="tile hero">
+    <span class="mm-lockup" style="--u: 1.6px" role="img" aria-label="Murmur">
+      <span class="mm-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+      <span class="mm-wordmark" aria-hidden="true">murmur</span>
+    </span>
+    <span class="mm-help note">Lockup: mark and wordmark</span>
+  </div>
+  <div class="tile">
+    <span class="sizes">
+      <span class="mm-mark" style="--u: 1.5px" role="img" aria-label="Murmur mark"><i></i><i></i><i></i><i></i><i></i></span>
+      <span class="mm-mark" style="--u: 0.75px" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+      <span class="mm-mark" style="--u: 0.34px" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+    </span>
+    <span class="mm-help note">Mark at 72, 36 and 16px</span>
+  </div>
+  <div class="tile dark">
+    <span class="sizes">
+      <span class="mm-appicon" style="--u: 1.25px" role="img" aria-label="Murmur app icon"><span class="mm-mark"><i></i><i></i><i></i><i></i><i></i></span></span>
+      <span class="mm-appicon" style="--u: 0.75px" aria-hidden="true"><span class="mm-mark"><i></i><i></i><i></i><i></i><i></i></span></span>
+      <span class="mm-mark mm-mark-mono" style="--u: 0.75px; --bar: var(--overlay-ink)" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+    </span>
+    <span class="mm-help note">App icon, small app icon, single ink</span>
+  </div>
+</div>
+</body>
+</html>

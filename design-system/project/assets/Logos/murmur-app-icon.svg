@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Murmur app icon">
+  <title>Murmur app icon</title>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="14.25" fill="#0a0f12" stroke="#56727d" stroke-width="1.5"/>
+  <rect x="12.96" y="20.52" width="5.04" height="27.36" rx="2.52" fill="#eaf2f0"/>
+  <rect x="21.24" y="29.88" width="5.04" height="18" rx="2.52" fill="#eaf2f0"/>
+  <rect x="29.52" y="37.8" width="5.04" height="10.08" rx="2.52" fill="#eaf2f0"/>
+  <rect x="37.8" y="29.88" width="5.04" height="18" rx="2.52" fill="#eaf2f0"/>
+  <rect x="46.08" y="14.76" width="5.04" height="34.56" rx="2.52" fill="#ff6a3d"/>
+</svg>
