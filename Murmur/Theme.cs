@@ -136,6 +136,13 @@ public static class Theme
     }
 }
 
+/// <summary>Segoe Fluent Icons code points used by the main window.</summary>
+public static class Glyphs
+{
+    public const string Copy = "";
+    public const string Check = "";
+}
+
 /// <summary>Small builders for pieces of UI that are assembled in code.</summary>
 public static class Ui
 {
@@ -167,6 +174,43 @@ public static class Ui
         cap.SetResourceReference(FrameworkElement.StyleProperty, recording ? "KeycapRecording" : "Keycap");
         if (recording) text.SetResourceReference(TextBlock.ForegroundProperty, "VoiceInk");
         return cap;
+    }
+
+    /// <summary>
+    /// Fills a text block with a sentence that has keycaps in it, so a hotkey reads in line with the words:
+    /// Sentence(block, "Hold ", combo, " and talk."). Strings become text, a key list becomes keycaps.
+    /// </summary>
+    public static void Sentence(TextBlock target, params object[] parts)
+    {
+        target.Inlines.Clear();
+        foreach (var part in parts)
+        {
+            if (part is string text) target.Inlines.Add(new System.Windows.Documents.Run(text));
+            else if (part is IEnumerable<int> combo)
+            {
+                var keys = Keys(combo);
+                keys.Margin = new Thickness(2, 0, 2, 0);
+                target.Inlines.Add(new System.Windows.Documents.InlineUIContainer(keys) { BaselineAlignment = BaselineAlignment.Center });
+            }
+        }
+    }
+
+    /// <summary>A glyph from Segoe Fluent Icons followed by a short label, for small ghost buttons.</summary>
+    public static StackPanel GlyphLabel(string glyph, string label, string? brushKey = null)
+    {
+        // No style on the glyph: it inherits the button's colour, so hover brightens glyph and label together.
+        var icon = new TextBlock { Text = glyph, FontSize = 12, Margin = new Thickness(0, 1, 6, 0), VerticalAlignment = VerticalAlignment.Center };
+        icon.SetResourceReference(TextBlock.FontFamilyProperty, "FontIcons");
+        var text = new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center };
+        if (brushKey != null)
+        {
+            icon.SetResourceReference(TextBlock.ForegroundProperty, brushKey);
+            text.SetResourceReference(TextBlock.ForegroundProperty, brushKey);
+        }
+        var panel = new StackPanel { Orientation = Orientation.Horizontal };
+        panel.Children.Add(icon);
+        panel.Children.Add(text);
+        return panel;
     }
 
     public static void Animate(IAnimatable target, DependencyProperty property, double to, TimeSpan duration, IEasingFunction? easing = null)

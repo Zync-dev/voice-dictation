@@ -8,32 +8,81 @@
         FontFamily="{StaticResource FontBody}" FontSize="14"
         UseLayoutRounding="True" TextOptions.TextFormattingMode="Ideal">
     <Window.Resources>
-        <!-- Setting row: label and one line of help on the left, the control on the right. -->
+        <BooleanToVisibilityConverter x:Key="Visible"/>
+        <local:DayNameConverter x:Key="DayName"/>
+        <local:DayTotalsConverter x:Key="DayTotals"/>
+        <!-- Width of the control column in setting rows; narrows a little in a small window (MainWindow.xaml.cs). -->
+        <GridLength x:Key="ControlColumn">260</GridLength>
+
+        <!-- Page header: a title and one short line under it. -->
+        <Style x:Key="PageLead" TargetType="TextBlock" BasedOn="{StaticResource BodyMuted}">
+            <Setter Property="Margin" Value="0,8,0,0"/>
+            <Setter Property="MaxWidth" Value="560"/>
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+        </Style>
+
+        <!-- Settings: a heading over each card; inside, rows of label and help on the left, the control in a fixed column on the right. -->
+        <Style x:Key="SectionHeading" TargetType="TextBlock" BasedOn="{StaticResource Heading}">
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+        <Style x:Key="SettingsCard" TargetType="Border" BasedOn="{StaticResource Card}">
+            <Setter Property="Padding" Value="24,0"/>
+            <Setter Property="Margin" Value="0,0,0,32"/>
+        </Style>
         <Style x:Key="SettingRow" TargetType="Grid">
-            <Setter Property="Margin" Value="0,10"/>
+            <Setter Property="Margin" Value="0,16"/>
+            <Setter Property="MinHeight" Value="36"/>
         </Style>
-        <Style x:Key="FieldLabel" TargetType="TextBlock" BasedOn="{StaticResource Label}">
-            <Setter Property="Margin" Value="0,14,0,6"/>
+        <Style x:Key="RowText" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,24,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
-        <Style x:Key="FieldHelp" TargetType="TextBlock" BasedOn="{StaticResource Caption}">
-            <Setter Property="Margin" Value="0,6,0,0"/>
+        <Style x:Key="RowHelp" TargetType="TextBlock" BasedOn="{StaticResource Caption}">
+            <Setter Property="Margin" Value="0,2,0,0"/>
         </Style>
+        <Style x:Key="RowLine" TargetType="Border">
+            <Setter Property="Height" Value="1"/>
+            <Setter Property="Background" Value="{DynamicResource Line}"/>
+        </Style>
+
+        <!-- Tables -->
         <Style x:Key="TableCard" TargetType="Border" BasedOn="{StaticResource Card}">
-            <Setter Property="Padding" Value="4"/>
+            <Setter Property="Padding" Value="0,4,0,8"/>
             <Setter Property="Margin" Value="0"/>
         </Style>
-        <Style x:Key="CopyButton" TargetType="Button" BasedOn="{StaticResource BtnGhost}">
+        <!-- Shown in a table card while the table has no filled-in rows (MainWindow.xaml.cs). -->
+        <Style x:Key="TableEmpty" TargetType="TextBlock" BasedOn="{StaticResource BodyMuted}">
+            <Setter Property="TextAlignment" Value="Center"/>
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+            <Setter Property="VerticalAlignment" Value="Top"/>
+            <Setter Property="Margin" Value="24,100,24,24"/>
+            <Setter Property="MaxWidth" Value="380"/>
+            <Setter Property="IsHitTestVisible" Value="False"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
+        </Style>
+
+        <!-- History: the Copy action shows when the row is hovered or has keyboard focus. -->
+        <Style x:Key="RowAction" TargetType="Button" BasedOn="{StaticResource BtnGhost}">
             <Setter Property="Opacity" Value="0"/>
             <Setter Property="VerticalAlignment" Value="Top"/>
-            <Setter Property="Margin" Value="16,0,0,0"/>
+            <Setter Property="Margin" Value="12,-4,0,0"/>
+            <Setter Property="Padding" Value="10,0"/>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
                     <Setter Property="Opacity" Value="1"/>
                 </DataTrigger>
-                <Trigger Property="IsKeyboardFocused" Value="True">
+                <DataTrigger Binding="{Binding IsKeyboardFocusWithin, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
                     <Setter Property="Opacity" Value="1"/>
-                </Trigger>
+                </DataTrigger>
             </Style.Triggers>
+        </Style>
+        <!-- The plus glyph in front of an Add button's label. -->
+        <Style x:Key="AddGlyph" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource FontIcons}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Text" Value="&#xE710;"/>
+            <Setter Property="Margin" Value="0,1,8,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
     </Window.Resources>
 
@@ -46,23 +95,26 @@
         <!-- ===== Sidebar ===== -->
         <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,1,0">
             <DockPanel Margin="12,24,12,16">
-                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="12,0,0,24">
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="12,0,0,28">
                     <Control x:Name="SidebarMark" Style="{StaticResource Mark}" Height="24" VerticalAlignment="Bottom"/>
                     <TextBlock Text="murmur" FontFamily="{StaticResource FontDisplay}" FontWeight="Bold" FontSize="23"
                                Margin="7,0,0,-4" VerticalAlignment="Bottom" Foreground="{DynamicResource Ink}"/>
                 </StackPanel>
-                <StackPanel DockPanel.Dock="Bottom" Margin="12,0">
-                    <ContentControl x:Name="HotkeyHintKeys" Focusable="False" HorizontalAlignment="Left"/>
-                    <TextBlock Style="{StaticResource Caption}" Text="Hold to dictate" Margin="0,6,0,0"/>
-                </StackPanel>
+                <!-- The hotkey, drawn as keys on a small sunken plate. -->
+                <Border DockPanel.Dock="Bottom" Background="{DynamicResource SurfaceSunken}" CornerRadius="10" Padding="12,10,12,11">
+                    <StackPanel>
+                        <ContentControl x:Name="HotkeyHintKeys" Focusable="False" HorizontalAlignment="Left"/>
+                        <TextBlock Style="{StaticResource Caption}" Text="Hold to dictate" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </Border>
                 <ListBox x:Name="Nav" Background="Transparent" BorderThickness="0" Padding="0"
                          ItemContainerStyle="{StaticResource NavItem}" SelectionChanged="Nav_SelectionChanged"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                    <ListBoxItem Content="Home"/>
-                    <ListBoxItem Content="Dictionary"/>
-                    <ListBoxItem Content="Snippets"/>
-                    <ListBoxItem Content="Style"/>
-                    <ListBoxItem Content="Settings"/>
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Pages">
+                    <ListBoxItem Content="Home" Tag="&#xE80F;"/>
+                    <ListBoxItem Content="Dictionary" Tag="&#xE82D;"/>
+                    <ListBoxItem Content="Snippets" Tag="&#xE77F;"/>
+                    <ListBoxItem Content="Style" Tag="&#xE8D2;"/>
+                    <ListBoxItem Content="Settings" Tag="&#xE713;"/>
                 </ListBox>
             </DockPanel>
         </Border>
@@ -75,308 +127,536 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
-            <DockPanel>
-                <ContentControl x:Name="ModelTag" DockPanel.Dock="Right" VerticalAlignment="Top" Margin="16,8,0,0"
-                                Style="{StaticResource TagScript}" Content="Speech model ready"/>
-                <StackPanel>
+
+            <!-- Hero: the promise, and the two gestures with the real hotkey drawn in. -->
+            <StackPanel>
+                <DockPanel>
+                    <ContentControl x:Name="ModelTag" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="16,0,0,0"
+                                    Style="{StaticResource TagScript}" Content="Speech model ready"/>
                     <TextBlock Style="{StaticResource DisplayLg}" Text="Speak. It types."/>
-                    <TextBlock Style="{StaticResource BodyMuted}" Text="Click into any text field, hold the hotkey and talk." Margin="0,8,0,0"/>
-                </StackPanel>
-            </DockPanel>
+                </DockPanel>
+                <TextBlock x:Name="HeroHint" Style="{StaticResource BodyMuted}" Margin="0,10,0,0" LineHeight="26"/>
+            </StackPanel>
 
-            <UniformGrid Grid.Row="1" Columns="4" Margin="-8,24,-8,24">
-                <Border Style="{StaticResource StatCard}">
-                    <StackPanel>
-                        <Viewbox Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left"><TextBlock x:Name="StatWords" Style="{StaticResource Stat}" Foreground="{DynamicResource VoiceInk}" Text="-"/></Viewbox>
-                        <TextBlock Style="{StaticResource Caption}" Text="words dictated"/>
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource StatCard}">
-                    <StackPanel>
-                        <Viewbox Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left"><TextBlock Style="{StaticResource Stat}"><Run x:Name="StatWpm" Text="-"/><Run Text=" wpm" FontFamily="{StaticResource FontBody}" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource InkMuted}"/></TextBlock></Viewbox>
-                        <TextBlock Style="{StaticResource Caption}" Text="speaking speed"/>
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource StatCard}">
-                    <StackPanel>
-                        <Viewbox Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left"><TextBlock x:Name="StatCount" Style="{StaticResource Stat}" Text="-"/></Viewbox>
-                        <TextBlock Style="{StaticResource Caption}" Text="dictations"/>
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource StatCard}">
-                    <StackPanel>
-                        <Viewbox Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left"><TextBlock Style="{StaticResource Stat}"><Run x:Name="StatSaved" Text="-"/><Run x:Name="StatSavedUnit" Text=" min" FontFamily="{StaticResource FontBody}" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource InkMuted}"/></TextBlock></Viewbox>
-                        <TextBlock Style="{StaticResource Caption}" Text="saved against typing at 40 wpm"/>
-                    </StackPanel>
-                </Border>
-            </UniformGrid>
+            <!-- Stats: one strip, the lead number in voice with this week's words beside it. -->
+            <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0" Margin="0,24,0,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="1.4*"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid Margin="20,16,16,16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Viewbox Height="36" Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left"><TextBlock x:Name="StatWords" Style="{StaticResource Stat}" Foreground="{DynamicResource VoiceInk}" Text="–"/></Viewbox>
+                        <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource Caption}" Text="words dictated" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                        <!-- Words per day for the last seven days; today is the caret. Bars are added in code. -->
+                        <StackPanel x:Name="Spark" Grid.Column="1" Orientation="Horizontal" Height="24" VerticalAlignment="Bottom" Margin="10,0,0,7"
+                                    Background="Transparent" ToolTip="Words per day, last 7 days" AutomationProperties.Name="Words per day, last 7 days"/>
+                    </Grid>
+                    <Border Grid.Column="1" BorderBrush="{DynamicResource Line}" BorderThickness="1,0,0,0" Padding="18,16,14,16">
+                        <StackPanel>
+                            <Viewbox Height="36" Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left"><TextBlock Style="{StaticResource Stat}"><Run x:Name="StatWpm" Text="–"/><Run x:Name="StatWpmUnit" Text=" wpm" FontFamily="{StaticResource FontBody}" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource InkMuted}"/></TextBlock></Viewbox>
+                            <TextBlock Style="{StaticResource Caption}" Text="speaking speed" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="2" BorderBrush="{DynamicResource Line}" BorderThickness="1,0,0,0" Padding="18,16,14,16">
+                        <StackPanel>
+                            <Viewbox Height="36" Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left"><TextBlock x:Name="StatCount" Style="{StaticResource Stat}" Text="–"/></Viewbox>
+                            <TextBlock x:Name="StatCountLabel" Style="{StaticResource Caption}" Text="dictations" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="3" BorderBrush="{DynamicResource Line}" BorderThickness="1,0,0,0" Padding="18,16,14,16"
+                            Background="Transparent" ToolTip="Compared with typing the same words at 40 words a minute.">
+                        <StackPanel>
+                            <Viewbox Height="36" Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left"><TextBlock Style="{StaticResource Stat}"><Run x:Name="StatSaved" Text="–"/><Run x:Name="StatSavedUnit" Text="" FontFamily="{StaticResource FontBody}" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource InkMuted}"/></TextBlock></Viewbox>
+                            <TextBlock Style="{StaticResource Caption}" Text="time saved" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Border>
 
-            <DockPanel Grid.Row="2" Margin="0,0,0,8">
-                <Button DockPanel.Dock="Right" Style="{StaticResource BtnDanger}" Content="Clear history" Click="ClearHistory_Click"/>
-                <TextBlock Style="{StaticResource Overline}" Text="HISTORY" VerticalAlignment="Center"/>
-            </DockPanel>
+            <Grid Grid.Row="2" Margin="0,32,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Heading}" Text="History" Margin="0" VerticalAlignment="Center"/>
+                <TextBox x:Name="HistorySearch" Grid.Column="1" Style="{StaticResource SearchInput}" Width="220" Tag="Search history"
+                         AutomationProperties.Name="Search history" TextChanged="HistorySearch_TextChanged" KeyDown="HistorySearch_KeyDown"/>
+                <Button x:Name="ClearHistoryButton" Grid.Column="2" Style="{StaticResource BtnGhostDanger}" Height="32" Content="Clear history" Margin="8,0,0,0" Click="ClearHistory_Click"/>
+            </Grid>
 
-            <Border Grid.Row="3" Style="{StaticResource Card}" Padding="0" Margin="0">
+            <Border Grid.Row="3" Style="{StaticResource Card}" Padding="8,4,8,8" Margin="0">
                 <Grid>
                     <ListBox x:Name="HistoryList" Background="Transparent" BorderThickness="0" Padding="0"
                              ItemContainerStyle="{StaticResource HistoryRow}"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                             VirtualizingPanel.ScrollUnit="Pixel">
+                             KeyboardNavigation.TabNavigation="Continue" Focusable="False"
+                             VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.IsVirtualizingWhenGrouping="True"
+                             VirtualizingPanel.ScrollUnit="Pixel" AutomationProperties.Name="History">
+                        <ListBox.GroupStyle>
+                            <GroupStyle>
+                                <GroupStyle.HeaderTemplate>
+                                    <DataTemplate>
+                                        <DockPanel Margin="12,12,12,4">
+                                            <TextBlock DockPanel.Dock="Right" Style="{StaticResource Caption}" VerticalAlignment="Center" TextWrapping="NoWrap">
+                                                <TextBlock.Text>
+                                                    <MultiBinding Converter="{StaticResource DayTotals}">
+                                                        <Binding Path="ItemCount"/>
+                                                        <Binding Path="Items"/>
+                                                    </MultiBinding>
+                                                </TextBlock.Text>
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding Name, Converter={StaticResource DayName}}" FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource Ink}" VerticalAlignment="Center"/>
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </GroupStyle.HeaderTemplate>
+                            </GroupStyle>
+                        </ListBox.GroupStyle>
                         <ListBox.ItemTemplate>
                             <DataTemplate DataType="{x:Type local:HistoryEntry}">
-                                <DockPanel>
-                                    <Button DockPanel.Dock="Right" Style="{StaticResource CopyButton}" Content="Copy" Tag="{Binding}" Click="CopyHistory_Click"/>
-                                    <StackPanel>
-                                        <StackPanel Orientation="Horizontal">
-                                            <ContentControl Content="{Binding Mode}">
-                                                <ContentControl.Style>
-                                                    <Style TargetType="ContentControl" BasedOn="{StaticResource TagVoice}">
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding IsCommand}" Value="True">
-                                                                <Setter Property="Background" Value="{DynamicResource CommandSoft}"/>
-                                                                <Setter Property="Foreground" Value="{DynamicResource Command}"/>
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </ContentControl.Style>
-                                            </ContentControl>
-                                            <TextBlock Style="{StaticResource KeycapText}" Text="{Binding AppLower}" Margin="10,0,0,0" VerticalAlignment="Center"/>
-                                            <TextBlock Style="{StaticResource Caption}" Text="{Binding TimeText}" Margin="10,0,0,0" VerticalAlignment="Center"/>
-                                            <TextBlock Style="{StaticResource Caption}" Text="{Binding WordsText}" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="56"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Style="{StaticResource Caption}" Text="{Binding ClockText}" Typography.NumeralAlignment="Tabular"
+                                               Margin="0,2,0,0" VerticalAlignment="Top" TextWrapping="NoWrap"/>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Style="{StaticResource Body}" Text="{Binding Preview}" MaxHeight="60" TextTrimming="WordEllipsis"/>
+                                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                            <ContentControl Style="{StaticResource TagCommand}" Content="Command" Margin="0,0,8,0" Height="20"
+                                                            Visibility="{Binding IsCommand, Converter={StaticResource Visible}}"/>
+                                            <TextBlock Style="{StaticResource KeycapText}" Foreground="{DynamicResource InkMuted}" Text="{Binding AppLower}"
+                                                       VerticalAlignment="Center" Visibility="{Binding HasApp, Converter={StaticResource Visible}}"/>
+                                            <TextBlock Style="{StaticResource Caption}" Text="·" Margin="6,0" VerticalAlignment="Center"
+                                                       Visibility="{Binding HasApp, Converter={StaticResource Visible}}"/>
+                                            <TextBlock Style="{StaticResource Caption}" Text="{Binding WordsText}" VerticalAlignment="Center"/>
                                         </StackPanel>
-                                        <TextBlock Style="{StaticResource Body}" Text="{Binding Text}" Margin="0,6,0,0"/>
                                     </StackPanel>
-                                </DockPanel>
+                                    <Button Grid.Column="2" Style="{StaticResource RowAction}" Tag="{Binding}" Click="CopyHistory_Click"
+                                            AutomationProperties.Name="Copy">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock FontFamily="{StaticResource FontIcons}" Text="&#xE8C8;" FontSize="12" Margin="0,1,6,0" VerticalAlignment="Center"/>
+                                            <TextBlock Text="Copy" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-                    <TextBlock x:Name="HistoryEmpty" Style="{StaticResource BodyMuted}" TextAlignment="Center" Margin="24"
-                               Text="Nothing here yet. Click into any text field, hold the hotkey and talk."
-                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+
+                    <!-- First run: sound turning into text and landing at the caret, then how to start. -->
+                    <StackPanel x:Name="HistoryEmpty" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24" MaxWidth="440">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Height="24" Margin="0,0,0,20" IsHitTestVisible="False">
+                            <Rectangle Width="4" Height="19" RadiusX="2" RadiusY="2" Fill="{DynamicResource LineStrong}" VerticalAlignment="Bottom"/>
+                            <Rectangle Width="4" Height="13" RadiusX="2" RadiusY="2" Fill="{DynamicResource LineStrong}" VerticalAlignment="Bottom" Margin="3,0,0,0"/>
+                            <Rectangle Width="4" Height="7" RadiusX="2" RadiusY="2" Fill="{DynamicResource LineStrong}" VerticalAlignment="Bottom" Margin="3,0,0,0"/>
+                            <Rectangle Width="4" Height="13" RadiusX="2" RadiusY="2" Fill="{DynamicResource LineStrong}" VerticalAlignment="Bottom" Margin="3,0,0,0"/>
+                            <Rectangle Width="40" Height="5" RadiusX="2.5" RadiusY="2.5" Fill="{DynamicResource Line}" VerticalAlignment="Bottom" Margin="12,0,0,3"/>
+                            <Rectangle Width="24" Height="5" RadiusX="2.5" RadiusY="2.5" Fill="{DynamicResource Line}" VerticalAlignment="Bottom" Margin="5,0,0,3"/>
+                            <Rectangle Width="32" Height="5" RadiusX="2.5" RadiusY="2.5" Fill="{DynamicResource Line}" VerticalAlignment="Bottom" Margin="5,0,0,3"/>
+                            <Rectangle Width="4" Height="24" RadiusX="2" RadiusY="2" Fill="{DynamicResource Voice}" VerticalAlignment="Bottom" Margin="4,0,0,0"/>
+                        </StackPanel>
+                        <TextBlock Style="{StaticResource Heading}" Text="Nothing here yet" HorizontalAlignment="Center" Margin="0,0,0,6"/>
+                        <TextBlock x:Name="EmptyHint" Style="{StaticResource BodyMuted}" TextAlignment="Center" LineHeight="26"/>
+                        <TextBlock Style="{StaticResource BodyMuted}" TextAlignment="Center" Text="Each dictation lands here, ready to copy again."/>
+                    </StackPanel>
+                    <TextBlock x:Name="HistoryNoMatch" Style="{StaticResource BodyMuted}" TextAlignment="Center" Margin="24"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
                 </Grid>
             </Border>
         </Grid>
 
         <!-- ===== Dictionary ===== -->
-        <DockPanel x:Name="PageDictionary" Grid.Column="1" Margin="32,32,32,24" Visibility="Collapsed">
-            <TextBlock DockPanel.Dock="Top" Style="{StaticResource DisplayLg}" Text="Dictionary"/>
-            <TextBlock DockPanel.Dock="Top" Style="{StaticResource BodyMuted}" Margin="0,8,0,24" MaxWidth="680" HorizontalAlignment="Left"
-                       Text="Names, brands and jargon you want spelled exactly. If the speech model still gets one wrong, list what it writes instead under Misheard as, separated by commas. Click the empty bottom row to add a word. Press Delete to remove one."/>
-            <Border Style="{StaticResource TableCard}">
-                <DataGrid x:Name="DictionaryGrid">
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="TERM" Binding="{Binding Term}" Width="*" ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEditor}"/>
-                        <DataGridTextColumn Header="MISHEARD AS" Binding="{Binding MisheardAs}" Width="*" ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEditor}"/>
-                    </DataGrid.Columns>
-                </DataGrid>
+        <Grid x:Name="PageDictionary" Grid.Column="1" Margin="32,32,32,24" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <DockPanel Margin="0,0,0,24">
+                <Button DockPanel.Dock="Right" Style="{StaticResource BtnPrimary}" VerticalAlignment="Top" Margin="16,3,0,0"
+                        Click="AddWord_Click" AutomationProperties.Name="Add a word">
+                    <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource AddGlyph}"/><TextBlock Text="Add a word" VerticalAlignment="Center"/></StackPanel>
+                </Button>
+                <StackPanel>
+                    <TextBlock Style="{StaticResource DisplayLg}" Text="Dictionary"/>
+                    <TextBlock Style="{StaticResource PageLead}" Text="Names, brands and jargon that Murmur should spell exactly."/>
+                </StackPanel>
+            </DockPanel>
+            <Border Grid.Row="1" Style="{StaticResource TableCard}">
+                <Grid>
+                    <DataGrid x:Name="DictionaryGrid" AutomationProperties.Name="Dictionary">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Term" Binding="{Binding Term}" Width="*" ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEditor}"/>
+                            <DataGridTextColumn Header="Misheard as" Binding="{Binding MisheardAs}" Width="*" ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEditor}"/>
+                            <DataGridTemplateColumn Width="60" IsReadOnly="True">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate><Button Style="{StaticResource RowRemove}" Tag="{Binding}" Click="RemoveRow_Click"/></DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock x:Name="DictionaryEmpty" Style="{StaticResource TableEmpty}"
+                               Text="No words yet. Add each name or term the speech model gets wrong, and Murmur spells it your way."/>
+                </Grid>
             </Border>
-        </DockPanel>
+            <TextBlock Grid.Row="2" Style="{StaticResource Caption}" Margin="0,12,0,0"
+                       Text="Misheard as: what the speech model writes instead, separated by commas. Double-click a cell to edit it."/>
+        </Grid>
 
         <!-- ===== Snippets ===== -->
-        <DockPanel x:Name="PageSnippets" Grid.Column="1" Margin="32,32,32,24" Visibility="Collapsed">
-            <TextBlock DockPanel.Dock="Top" Style="{StaticResource DisplayLg}" Text="Snippets"/>
-            <TextBlock DockPanel.Dock="Top" Style="{StaticResource BodyMuted}" Margin="0,8,0,24" MaxWidth="680" HorizontalAlignment="Left"
-                       Text="Say a short phrase, get a long text. Wherever the phrase appears in what you dictate, Murmur inserts the text instead. Good for addresses, links and signatures."/>
-            <Border DockPanel.Dock="Bottom" Style="{StaticResource Card}" Margin="0,16,0,0">
+        <Grid x:Name="PageSnippets" Grid.Column="1" Margin="32,32,32,24" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*" MinHeight="140"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <DockPanel Margin="0,0,0,24">
+                <Button DockPanel.Dock="Right" Style="{StaticResource BtnPrimary}" VerticalAlignment="Top" Margin="16,3,0,0"
+                        Click="AddSnippet_Click" AutomationProperties.Name="Add a snippet">
+                    <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource AddGlyph}"/><TextBlock Text="Add a snippet" VerticalAlignment="Center"/></StackPanel>
+                </Button>
                 <StackPanel>
-                    <TextBlock Style="{StaticResource Label}" Text="Text of the selected snippet"/>
-                    <TextBlock Style="{StaticResource Caption}" Text="Use this box for text with more than one line." Margin="0,2,0,8"/>
-                    <TextBox x:Name="SnippetEditor" Style="{StaticResource InputMultiline}" Height="88"
+                    <TextBlock Style="{StaticResource DisplayLg}" Text="Snippets"/>
+                    <TextBlock Style="{StaticResource PageLead}" Text="Say a short phrase, get a longer text. Good for addresses, links and signatures."/>
+                </StackPanel>
+            </DockPanel>
+            <Border Grid.Row="1" Style="{StaticResource TableCard}">
+                <Grid>
+                    <DataGrid x:Name="SnippetGrid" AutomationProperties.Name="Snippets">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="When you say" Binding="{Binding Trigger}" Width="2*" ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEditor}"/>
+                            <DataGridTextColumn Header="Murmur inserts" Binding="{Binding Expansion}" Width="3*" ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEditor}"/>
+                            <DataGridTemplateColumn Width="60" IsReadOnly="True">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate><Button Style="{StaticResource RowRemove}" Tag="{Binding}" Click="RemoveRow_Click"/></DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock x:Name="SnippetsEmpty" Style="{StaticResource TableEmpty}"
+                               Text="No snippets yet. Add one for text you type often, then just say its phrase."/>
+                </Grid>
+            </Border>
+            <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,16,0,0" Padding="20,16,20,20">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,10">
+                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Caption}" VerticalAlignment="Center" TextWrapping="NoWrap"
+                                   TextTrimming="CharacterEllipsis" Margin="16,0,0,0" MaxWidth="360"
+                                   Text="{Binding SelectedItem.Trigger, ElementName=SnippetGrid, StringFormat='Inserted when you say “{0}”', FallbackValue='Select a snippet to edit its full text.', TargetNullValue='Select a snippet to edit its full text.'}"/>
+                        <TextBlock Style="{StaticResource Label}" Text="Full text"/>
+                    </DockPanel>
+                    <TextBox x:Name="SnippetEditor" Style="{StaticResource InputMultiline}" Height="88" AutomationProperties.Name="Full text of the selected snippet"
                              Text="{Binding SelectedItem.Expansion, ElementName=SnippetGrid, UpdateSourceTrigger=PropertyChanged, FallbackValue=''}"/>
                 </StackPanel>
             </Border>
-            <Border Style="{StaticResource TableCard}">
-                <DataGrid x:Name="SnippetGrid">
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="WHEN I SAY" Binding="{Binding Trigger}" Width="2*" ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEditor}"/>
-                        <DataGridTextColumn Header="INSERT" Binding="{Binding Expansion}" Width="3*" ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEditor}"/>
-                    </DataGrid.Columns>
-                </DataGrid>
-            </Border>
-        </DockPanel>
+        </Grid>
 
         <!-- ===== Style ===== -->
-        <DockPanel x:Name="PageStyle" Grid.Column="1" Margin="32,32,32,24" Visibility="Collapsed">
-            <TextBlock DockPanel.Dock="Top" Style="{StaticResource DisplayLg}" Text="Style"/>
-            <TextBlock DockPanel.Dock="Top" Style="{StaticResource BodyMuted}" Margin="0,8,0,24" MaxWidth="680" HorizontalAlignment="Left"
-                       Text="Murmur matches the tone of your text to the app you are dictating into. Tone needs the AI model from Settings. Without it only Very casual has an effect."/>
-            <Border DockPanel.Dock="Top" Style="{StaticResource Card}">
+        <Grid x:Name="PageStyle" Grid.Column="1" Margin="32,32,32,24" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*" MinHeight="132"/>
+            </Grid.RowDefinitions>
+            <StackPanel Margin="0,0,0,24">
+                <TextBlock Style="{StaticResource DisplayLg}" Text="Style"/>
+                <TextBlock Style="{StaticResource PageLead}" Text="Murmur matches your tone to the app you are writing in. Tone needs AI polish from Settings; without it only Very casual has an effect."/>
+            </StackPanel>
+            <Border Grid.Row="1" Style="{StaticResource SettingsCard}" Margin="0">
                 <StackPanel>
-                    <TextBlock Style="{StaticResource Label}" Text="Default style" Margin="0,0,0,6"/>
-                    <ComboBox x:Name="DefaultStyleBox" Width="220" HorizontalAlignment="Left" SelectionChanged="Setting_Changed"/>
-                    <TextBlock Style="{StaticResource FieldLabel}" Text="Your own instructions"/>
-                    <TextBox x:Name="CustomInstructionsBox" Style="{StaticResource InputMultiline}" Height="64" LostFocus="Setting_Changed"/>
-                    <TextBlock Style="{StaticResource FieldHelp}" Text="For example: Use British spelling. Never use em dashes."/>
+                    <Grid Style="{StaticResource SettingRow}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                        <StackPanel Style="{StaticResource RowText}">
+                            <TextBlock Style="{StaticResource Label}" Text="Default style"/>
+                            <TextBlock Style="{StaticResource RowHelp}" Text="Used in every app that is not listed below."/>
+                        </StackPanel>
+                        <ComboBox x:Name="DefaultStyleBox" Grid.Column="1" VerticalAlignment="Center" SelectionChanged="Setting_Changed" AutomationProperties.Name="Default style"/>
+                    </Grid>
+                    <Border Style="{StaticResource RowLine}"/>
+                    <StackPanel Margin="0,16,0,20">
+                        <TextBlock Style="{StaticResource Label}" Text="Your own instructions"/>
+                        <TextBlock Style="{StaticResource RowHelp}" Text="For example: Use British spelling. Never use em dashes." Margin="0,2,0,8"/>
+                        <TextBox x:Name="CustomInstructionsBox" Style="{StaticResource InputMultiline}" Height="60" LostFocus="Setting_Changed" AutomationProperties.Name="Your own instructions"/>
+                    </StackPanel>
                 </StackPanel>
             </Border>
-            <TextBlock DockPanel.Dock="Top" Style="{StaticResource Overline}" Text="STYLE BY APP" Margin="0,8,0,8"/>
-            <Border Style="{StaticResource TableCard}">
-                <DataGrid x:Name="StyleGrid">
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="APP (PROCESS NAME)" Binding="{Binding App}" Width="2*" ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEditor}"/>
-                        <DataGridComboBoxColumn Header="STYLE" SelectedItemBinding="{Binding Style}" Width="*"
-                                                ItemsSource="{x:Static local:Styles.All}"/>
-                    </DataGrid.Columns>
-                </DataGrid>
+            <DockPanel Grid.Row="2" Margin="0,32,0,12">
+                <Button DockPanel.Dock="Right" Style="{StaticResource BtnPrimary}" VerticalAlignment="Bottom" Margin="16,0,0,0"
+                        Click="AddAppStyle_Click" AutomationProperties.Name="Add an app">
+                    <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource AddGlyph}"/><TextBlock Text="Add an app" VerticalAlignment="Center"/></StackPanel>
+                </Button>
+                <StackPanel VerticalAlignment="Bottom">
+                    <TextBlock Style="{StaticResource Heading}" Text="By app" Margin="0"/>
+                    <TextBlock Style="{StaticResource Caption}" Text="Use the app's process name, such as slack or winword." Margin="0,2,0,0"/>
+                </StackPanel>
+            </DockPanel>
+            <Border Grid.Row="3" Style="{StaticResource TableCard}">
+                <Grid>
+                    <DataGrid x:Name="StyleGrid" AutomationProperties.Name="Style by app">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="App" Binding="{Binding App}" Width="2*" ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEditor}"/>
+                            <DataGridComboBoxColumn Header="Style" SelectedItemBinding="{Binding Style}" Width="*"
+                                                    ItemsSource="{x:Static local:Styles.All}"/>
+                            <DataGridTemplateColumn Width="60" IsReadOnly="True">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate><Button Style="{StaticResource RowRemove}" Tag="{Binding}" Click="RemoveRow_Click"/></DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock x:Name="StyleEmpty" Style="{StaticResource TableEmpty}"
+                               Text="No apps yet. Every app uses the default style."/>
+                </Grid>
             </Border>
-        </DockPanel>
+        </Grid>
 
         <!-- ===== Settings ===== -->
         <ScrollViewer x:Name="PageSettings" Grid.Column="1" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" Focusable="False">
             <StackPanel Margin="32,32,32,24" MaxWidth="720" HorizontalAlignment="Left">
                 <TextBlock Style="{StaticResource DisplayLg}" Text="Settings"/>
-                <TextBlock Style="{StaticResource BodyMuted}" Text="Every setting saves the moment you change it." Margin="0,8,0,24"/>
+                <TextBlock Style="{StaticResource PageLead}" Text="Changes save as you make them." Margin="0,8,0,32"/>
 
-                <Border Style="{StaticResource Card}">
+                <!-- Hotkeys -->
+                <TextBlock Style="{StaticResource SectionHeading}" Text="Hotkeys"/>
+                <Border Style="{StaticResource SettingsCard}">
                     <StackPanel>
-                        <TextBlock Style="{StaticResource Heading}" Text="Hotkeys"/>
                         <Grid Style="{StaticResource SettingRow}">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <StackPanel Margin="0,0,24,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
                                 <TextBlock Style="{StaticResource Label}" Text="Dictate"/>
-                                <TextBlock Style="{StaticResource Caption}" Text="Hold to talk, release to insert. Double-tap to keep talking hands-free, then press again to finish. Esc cancels."/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Hold to talk. Double-tap for hands-free, press again to finish. Esc cancels."/>
                             </StackPanel>
-                            <Button x:Name="DictateHotkeyButton" Grid.Column="1" Style="{StaticResource BtnHotkey}" VerticalAlignment="Top" Click="DictateHotkey_Click"/>
+                            <Button x:Name="DictateHotkeyButton" Grid.Column="1" Style="{StaticResource BtnHotkey}" VerticalAlignment="Center" Click="DictateHotkey_Click"/>
                         </Grid>
-                        <Border Style="{StaticResource Divider}"/>
+                        <Border Style="{StaticResource RowLine}"/>
                         <Grid Style="{StaticResource SettingRow}">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <StackPanel Margin="0,0,24,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
                                 <TextBlock Style="{StaticResource Label}" Text="Command mode"/>
-                                <TextBlock Style="{StaticResource Caption}" Text="Select text and say what to do with it, or with nothing selected ask Murmur to write something. Needs the AI model below."/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Select text and say what to change, or ask Murmur to write something. Needs AI polish."/>
                             </StackPanel>
-                            <Button x:Name="CommandHotkeyButton" Grid.Column="1" Style="{StaticResource BtnHotkey}" VerticalAlignment="Top" Click="CommandHotkey_Click"/>
+                            <Button x:Name="CommandHotkeyButton" Grid.Column="1" Style="{StaticResource BtnHotkey}" VerticalAlignment="Center" Click="CommandHotkey_Click"/>
                         </Grid>
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource Card}">
+                <!-- Microphone and language -->
+                <TextBlock Style="{StaticResource SectionHeading}" Text="Microphone and language"/>
+                <Border Style="{StaticResource SettingsCard}">
                     <StackPanel>
-                        <TextBlock Style="{StaticResource Heading}" Text="Microphone and language"/>
-                        <TextBlock Style="{StaticResource Label}" Text="Microphone" Margin="0,0,0,6"/>
-                        <ComboBox x:Name="MicBox" SelectionChanged="Setting_Changed"/>
-                        <TextBlock Style="{StaticResource FieldLabel}" Text="Main language"/>
-                        <ComboBox x:Name="LanguageBox" DisplayMemberPath="Value" SelectedValuePath="Key" SelectionChanged="Setting_Changed"/>
-                        <TextBlock Style="{StaticResource FieldHelp}" Text="The language you mostly dictate in. Choosing it is more reliable than letting Murmur guess."/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Microphone"/>
+                            </StackPanel>
+                            <ComboBox x:Name="MicBox" Grid.Column="1" VerticalAlignment="Center" SelectionChanged="Setting_Changed" AutomationProperties.Name="Microphone"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Main language"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="The language you mostly speak. Choosing one beats letting Murmur guess."/>
+                            </StackPanel>
+                            <ComboBox x:Name="LanguageBox" Grid.Column="1" VerticalAlignment="Center" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                      SelectionChanged="Setting_Changed" AutomationProperties.Name="Main language"/>
+                        </Grid>
                         <StackPanel x:Name="SecondLanguagePanel">
-                            <TextBlock Style="{StaticResource FieldLabel}" Text="Second language"/>
-                            <ComboBox x:Name="SecondLanguageBox" DisplayMemberPath="Value" SelectedValuePath="Key" SelectionChanged="Setting_Changed"/>
-                            <TextBlock Style="{StaticResource FieldHelp}" Text="If you also dictate in another language, Murmur picks between these two for each sentence."/>
+                            <Border Style="{StaticResource RowLine}"/>
+                            <Grid Style="{StaticResource SettingRow}">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                                <StackPanel Style="{StaticResource RowText}">
+                                    <TextBlock Style="{StaticResource Label}" Text="Second language"/>
+                                    <TextBlock Style="{StaticResource RowHelp}" Text="Murmur picks between the two for each sentence."/>
+                                </StackPanel>
+                                <ComboBox x:Name="SecondLanguageBox" Grid.Column="1" VerticalAlignment="Center" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                          SelectionChanged="Setting_Changed" AutomationProperties.Name="Second language"/>
+                            </Grid>
                         </StackPanel>
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource Card}">
+                <!-- Speech recognition -->
+                <TextBlock Style="{StaticResource SectionHeading}" Text="Speech recognition"/>
+                <Border Style="{StaticResource SettingsCard}">
                     <StackPanel>
-                        <TextBlock Style="{StaticResource Heading}" Text="Speech recognition"/>
-                        <Border Style="{StaticResource SegTrack}">
-                            <StackPanel Orientation="Horizontal">
-                                <RadioButton x:Name="EngineLocal" GroupName="Engine" Style="{StaticResource Seg}" Content="On this PC" Checked="Setting_Changed"/>
-                                <RadioButton x:Name="EngineCloud" GroupName="Engine" Style="{StaticResource Seg}" Content="Cloud" Checked="Setting_Changed"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Turn speech into text"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Private and offline. Audio never leaves this PC."
+                                           Visibility="{Binding Visibility, ElementName=LocalPanel}"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Fastest. Your audio goes to the service below."
+                                           Visibility="{Binding Visibility, ElementName=CloudPanel}"/>
                             </StackPanel>
-                        </Border>
+                            <Border Grid.Column="1" Style="{StaticResource SegTrack}" HorizontalAlignment="Stretch" VerticalAlignment="Center">
+                                <UniformGrid Columns="2">
+                                    <RadioButton x:Name="EngineLocal" GroupName="Engine" Style="{StaticResource Seg}" Content="On this PC" Checked="Setting_Changed"/>
+                                    <RadioButton x:Name="EngineCloud" GroupName="Engine" Style="{StaticResource Seg}" Content="Cloud" Checked="Setting_Changed"/>
+                                </UniformGrid>
+                            </Border>
+                        </Grid>
                         <StackPanel x:Name="LocalPanel">
-                            <TextBlock Style="{StaticResource FieldHelp}" Text="Private, free and works offline. Audio never leaves this PC."/>
-                            <TextBlock Style="{StaticResource FieldLabel}" Text="Speech model"/>
-                            <ComboBox x:Name="ModelBox" DisplayMemberPath="Label" SelectedValuePath="Id" SelectionChanged="Model_Changed"/>
-                            <TextBlock Style="{StaticResource FieldHelp}" Text="A model downloads once, the first time you pick it. Bigger models are more accurate and slower. A graphics card is used when there is one."/>
+                            <Border Style="{StaticResource RowLine}"/>
+                            <Grid Style="{StaticResource SettingRow}">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                                <StackPanel Style="{StaticResource RowText}">
+                                    <TextBlock Style="{StaticResource Label}" Text="Speech model"/>
+                                    <TextBlock Style="{StaticResource RowHelp}" Text="Downloads once. Larger models are more accurate and slower. Uses the graphics card when there is one."/>
+                                </StackPanel>
+                                <ComboBox x:Name="ModelBox" Grid.Column="1" VerticalAlignment="Center" DisplayMemberPath="Label" SelectedValuePath="Id"
+                                          SelectionChanged="Model_Changed" AutomationProperties.Name="Speech model"/>
+                            </Grid>
                         </StackPanel>
                         <StackPanel x:Name="CloudPanel">
-                            <TextBlock Style="{StaticResource FieldHelp}" Text="Fastest. Your audio is sent to the provider you enter here."/>
-                            <TextBlock Style="{StaticResource FieldLabel}" Text="API address"/>
-                            <TextBox x:Name="SttUrlBox" LostFocus="Setting_Changed"/>
-                            <TextBlock Style="{StaticResource FieldHelp}" Text="Any OpenAI-compatible service, such as Groq or OpenAI."/>
-                            <TextBlock Style="{StaticResource FieldLabel}" Text="Model"/>
-                            <TextBox x:Name="SttModelBox" LostFocus="Setting_Changed"/>
-                            <TextBlock Style="{StaticResource FieldLabel}" Text="API key"/>
-                            <PasswordBox x:Name="SttKeyBox" LostFocus="Setting_Changed"/>
-                            <TextBlock Style="{StaticResource FieldHelp}" Text="Stored encrypted for your Windows account."/>
+                            <Border Style="{StaticResource RowLine}"/>
+                            <Grid Style="{StaticResource SettingRow}">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                                <StackPanel Style="{StaticResource RowText}">
+                                    <TextBlock Style="{StaticResource Label}" Text="API address"/>
+                                    <TextBlock Style="{StaticResource RowHelp}" Text="Any OpenAI-compatible service, such as Groq or OpenAI."/>
+                                </StackPanel>
+                                <TextBox x:Name="SttUrlBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="Setting_Changed" AutomationProperties.Name="Speech API address"/>
+                            </Grid>
+                            <Border Style="{StaticResource RowLine}"/>
+                            <Grid Style="{StaticResource SettingRow}">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                                <StackPanel Style="{StaticResource RowText}">
+                                    <TextBlock Style="{StaticResource Label}" Text="Model"/>
+                                </StackPanel>
+                                <TextBox x:Name="SttModelBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="Setting_Changed" AutomationProperties.Name="Speech model name"/>
+                            </Grid>
+                            <Border Style="{StaticResource RowLine}"/>
+                            <Grid Style="{StaticResource SettingRow}">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                                <StackPanel Style="{StaticResource RowText}">
+                                    <TextBlock Style="{StaticResource Label}" Text="API key"/>
+                                    <TextBlock Style="{StaticResource RowHelp}" Text="Stored encrypted for your Windows account."/>
+                                </StackPanel>
+                                <PasswordBox x:Name="SttKeyBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="Setting_Changed" AutomationProperties.Name="Speech API key"/>
+                            </Grid>
                         </StackPanel>
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource Card}">
+                <!-- AI polish -->
+                <TextBlock Style="{StaticResource SectionHeading}" Text="AI polish"/>
+                <Border Style="{StaticResource SettingsCard}">
                     <StackPanel>
-                        <TextBlock Style="{StaticResource Heading}" Text="AI model"/>
-                        <Grid Style="{StaticResource SettingRow}" Margin="0,0,0,10">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <StackPanel Margin="0,0,24,0">
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
                                 <TextBlock Style="{StaticResource Label}" Text="Polish dictations with AI"/>
-                                <TextBlock Style="{StaticResource Caption}" Text="Fixes grammar, applies corrections you say aloud, formats lists and matches the tone. Command mode uses the same model."/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Fixes grammar, applies corrections you say aloud, formats lists and matches the tone. Command mode uses the same model."/>
                             </StackPanel>
-                            <CheckBox x:Name="AiCleanupBox" Grid.Column="1" Click="Setting_Changed" AutomationProperties.Name="Polish dictations with AI"/>
+                            <CheckBox x:Name="AiCleanupBox" Grid.Column="1" HorizontalAlignment="Right" Click="Setting_Changed" AutomationProperties.Name="Polish dictations with AI"/>
                         </Grid>
-                        <TextBlock Style="{StaticResource FieldLabel}" Text="API address"/>
-                        <TextBox x:Name="LlmUrlBox" LostFocus="Setting_Changed"/>
-                        <TextBlock Style="{StaticResource FieldHelp}" Text="Any OpenAI-compatible service. To keep everything on this PC, use Ollama at http://localhost:11434/v1"/>
-                        <TextBlock Style="{StaticResource FieldLabel}" Text="Model"/>
-                        <TextBox x:Name="LlmModelBox" LostFocus="Setting_Changed"/>
-                        <TextBlock Style="{StaticResource FieldLabel}" Text="API key"/>
-                        <PasswordBox x:Name="LlmKeyBox" LostFocus="Setting_Changed"/>
-                        <TextBlock Style="{StaticResource FieldHelp}" Text="Not needed for a local address."/>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="API address"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Any OpenAI-compatible service. To stay on this PC, use Ollama at http://localhost:11434/v1"/>
+                            </StackPanel>
+                            <TextBox x:Name="LlmUrlBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="Setting_Changed" AutomationProperties.Name="AI API address"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Model"/>
+                            </StackPanel>
+                            <TextBox x:Name="LlmModelBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="Setting_Changed" AutomationProperties.Name="AI model name"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="API key"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Not needed for a local address."/>
+                            </StackPanel>
+                            <PasswordBox x:Name="LlmKeyBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="Setting_Changed" AutomationProperties.Name="AI API key"/>
+                        </Grid>
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource Card}">
+                <!-- Behaviour -->
+                <TextBlock Style="{StaticResource SectionHeading}" Text="Behaviour"/>
+                <Border Style="{StaticResource SettingsCard}">
                     <StackPanel>
-                        <TextBlock Style="{StaticResource Heading}" Text="Behaviour" Margin="0,0,0,4"/>
                         <Grid Style="{StaticResource SettingRow}">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <StackPanel Margin="0,0,24,0">
+                            <StackPanel Style="{StaticResource RowText}">
                                 <TextBlock Style="{StaticResource Label}" Text="Remove filler words"/>
-                                <TextBlock Style="{StaticResource Caption}" Text="Drops um and uh from what you say."/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Drops um and uh from what you say."/>
                             </StackPanel>
                             <CheckBox x:Name="FillersBox" Grid.Column="1" Click="Setting_Changed" AutomationProperties.Name="Remove filler words"/>
                         </Grid>
-                        <Border Style="{StaticResource Divider}" Margin="0"/>
+                        <Border Style="{StaticResource RowLine}"/>
                         <Grid Style="{StaticResource SettingRow}">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <StackPanel Margin="0,0,24,0">
+                            <StackPanel Style="{StaticResource RowText}">
                                 <TextBlock Style="{StaticResource Label}" Text="Add a space after each dictation"/>
-                                <TextBlock Style="{StaticResource Caption}" Text="So the next sentence does not run into the last one."/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="So the next sentence does not run into the last one."/>
                             </StackPanel>
                             <CheckBox x:Name="TrailingSpaceBox" Grid.Column="1" Click="Setting_Changed" AutomationProperties.Name="Add a space after each dictation"/>
                         </Grid>
-                        <Border Style="{StaticResource Divider}" Margin="0"/>
+                        <Border Style="{StaticResource RowLine}"/>
                         <Grid Style="{StaticResource SettingRow}">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <StackPanel Margin="0,0,24,0">
+                            <StackPanel Style="{StaticResource RowText}">
                                 <TextBlock Style="{StaticResource Label}" Text="Restore my clipboard"/>
-                                <TextBlock Style="{StaticResource Caption}" Text="Puts back what you had copied after the text is inserted."/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Puts back what you had copied once the text is in."/>
                             </StackPanel>
                             <CheckBox x:Name="RestoreClipboardBox" Grid.Column="1" Click="Setting_Changed" AutomationProperties.Name="Restore my clipboard"/>
                         </Grid>
-                        <Border Style="{StaticResource Divider}" Margin="0"/>
+                        <Border Style="{StaticResource RowLine}"/>
                         <Grid Style="{StaticResource SettingRow}">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <StackPanel Margin="0,0,24,0">
+                            <StackPanel Style="{StaticResource RowText}">
                                 <TextBlock Style="{StaticResource Label}" Text="Start and stop sounds"/>
-                                <TextBlock Style="{StaticResource Caption}" Text="A short tone when recording begins and ends."/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="A short tone when recording begins and ends."/>
                             </StackPanel>
                             <CheckBox x:Name="SoundsBox" Grid.Column="1" Click="Setting_Changed" AutomationProperties.Name="Start and stop sounds"/>
                         </Grid>
-                        <Border Style="{StaticResource Divider}" Margin="0"/>
+                        <Border Style="{StaticResource RowLine}"/>
                         <Grid Style="{StaticResource SettingRow}">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <StackPanel Margin="0,0,24,0">
+                            <StackPanel Style="{StaticResource RowText}">
                                 <TextBlock Style="{StaticResource Label}" Text="Show the pill when idle"/>
-                                <TextBlock Style="{StaticResource Caption}" Text="A small mark at the bottom of the screen shows Murmur is ready."/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="A small mark at the bottom of the screen shows Murmur is ready."/>
                             </StackPanel>
                             <CheckBox x:Name="RestPillBox" Grid.Column="1" Click="Setting_Changed" AutomationProperties.Name="Show the pill when idle"/>
                         </Grid>
-                        <Border Style="{StaticResource Divider}" Margin="0"/>
+                        <Border Style="{StaticResource RowLine}"/>
                         <Grid Style="{StaticResource SettingRow}">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <StackPanel Margin="0,0,24,0">
+                            <StackPanel Style="{StaticResource RowText}">
                                 <TextBlock Style="{StaticResource Label}" Text="Start with Windows"/>
-                                <TextBlock Style="{StaticResource Caption}" Text="Murmur waits in the tray after you sign in."/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Murmur waits in the tray after you sign in."/>
                             </StackPanel>
                             <CheckBox x:Name="StartupBox" Grid.Column="1" Click="Setting_Changed" AutomationProperties.Name="Start with Windows"/>
                         </Grid>
                     </StackPanel>
                 </Border>
 
-                <TextBlock x:Name="DataPathText" Style="{StaticResource Caption}"/>
+                <TextBlock x:Name="DataPathText" Style="{StaticResource Caption}" Margin="0,-8,0,0"/>
             </StackPanel>
         </ScrollViewer>
     </Grid>

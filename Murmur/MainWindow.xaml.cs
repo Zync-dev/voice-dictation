@@ -1,8 +1,14 @@
+using System.Collections;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
-using System.Windows.Media.Animation;
+using System.Windows.Data;
+using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Threading;
 
 namespace Murmur;
@@ -14,10 +20,22 @@ public partial class MainWindow : Window
     private bool _loading = true;
     private static bool _statsAnimated; // once per session, not once per window
 
+    /// <summary>History grouped by day, newest first, filtered by the search box.</summary>
+    private readonly ListCollectionView _historyView;
+    private string _query = "";
+    private DateTime _viewDay = DateTime.Today;
+    /// <summary>Developer aid: --empty-home shows Home as a new user sees it, without touching the saved history.</summary>
+    private readonly bool _emptyDemo = Environment.GetCommandLineArgs().Contains("--empty-home");
+    /// <summary>Table rows made with an Add button. Ones still blank when the page is left are dropped again.</summary>
+    private readonly HashSet<object> _added = [];
+    private readonly Border[] _sparkBars = new Border[7];
+
     private static readonly KeyValuePair<string, string>[] MainLanguages =
         [.. Languages.All, new("auto", "Guess among all languages")];
     private static readonly KeyValuePair<string, string>[] SecondLanguages =
         [new("", "None"), .. Languages.All];
+
+    private IReadOnlyList<HistoryEntry> HistoryItems => _emptyDemo ? [] : _app.History.Items;
 
     public MainWindow(App app)
     {
@@ -27,15 +45,28 @@ public partial class MainWindow : Window
         SourceInitialized += (_, _) => Theme.ApplyTitleBar(this);
 
         // Lists
-        HistoryList.ItemsSource = app.History.Items;
+        _historyView = new ListCollectionView(app.History.Items);
+        _historyView.SortDescriptions.Add(new SortDescription(nameof(HistoryEntry.Time), ListSortDirection.Descending));
+        var byDay = new PropertyGroupDescription(nameof(HistoryEntry.Day));
+        byDay.SortDescriptions.Add(new SortDescription(nameof(CollectionViewGroup.Name), ListSortDirection.Descending));
+        _historyView.GroupDescriptions.Add(byDay);
+        _historyView.Filter = MatchesSearch;
+        HistoryList.ItemsSource = _historyView;
         DictionaryGrid.ItemsSource = S.Dictionary;
         SnippetGrid.ItemsSource = S.Snippets;
         StyleGrid.ItemsSource = S.AppStyles;
-        // The multi-line editor only makes sense for a real snippet row (not the empty "add" row).
+        // The multi-line editor only makes sense for a real snippet row.
         void SyncSnippetEditor() => SnippetEditor.IsEnabled = SnippetGrid.SelectedItem is Snippet;
         SnippetGrid.SelectionChanged += (_, _) => SyncSnippetEditor();
         SnippetGrid.CurrentCellChanged += (_, _) => SyncSnippetEditor();
         SyncSnippetEditor();
+        S.Dictionary.CollectionChanged += OnTableChanged;
+        S.Snippets.CollectionChanged += OnTableChanged;
+        S.AppStyles.CollectionChanged += OnTableChanged;
+        foreach (var grid in new[] { DictionaryGrid, SnippetGrid, StyleGrid })
+            grid.RowEditEnding += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Background, RefreshTableEmpty);
+        RefreshTableEmpty();
+        BuildSpark();
         app.History.Changed += RefreshStats;
         app.Controller.ModelChanged += RefreshModelTag;
 
@@ -90,6 +121,9 @@ public partial class MainWindow : Window
         RefreshModelTag();
         Nav.SelectedIndex = Math.Clamp(app.StartPage, 0, 4);
 
+        Activated += (_, _) => KeepDayLabelsCurrent();
+        // Setting rows keep a fixed control column; give the labels a little more room in a small window.
+        SizeChanged += (_, _) => Resources["ControlColumn"] = new GridLength(ActualWidth < 920 ? 220 : 260);
         Deactivated += (_, _) =>
         {
             _app.Hotkeys.CancelCapture(); // never leave "press keys" armed while the user is elsewhere
@@ -103,6 +137,7 @@ public partial class MainWindow : Window
     {
         if (PageHome == null || Nav.SelectedIndex < 0) return;
         CommitGrids();
+        PruneBlankRows();
         FrameworkElement[] pages = [PageHome, PageDictionary, PageSnippets, PageStyle, PageSettings];
         for (int i = 0; i < pages.Length; i++)
         {
@@ -124,22 +159,35 @@ public partial class MainWindow : Window
 
     private void RefreshStats()
     {
-        var items = _app.History.Items;
+        KeepDayLabelsCurrent();
+        var items = HistoryItems;
         int words = items.Sum(i => i.Words);
         double minutes = items.Sum(i => i.Seconds) / 60.0;
-        // Typing at 40 words a minute against the time actually spent speaking.
-        double saved = Math.Max(0, words / 40.0 - minutes);
-        bool hours = saved >= 90;
-        HistoryEmpty.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        StatSavedUnit.Text = hours ? " h" : " min";
+        bool none = items.Count == 0;
+        RefreshListState();
 
         // Show a dash, not a zero, when there is nothing to measure yet.
-        string wpm = minutes > 0.05 ? Math.Round(words / minutes).ToString("N0") : "-";
-        string savedText = items.Count == 0 ? "-" : hours ? (saved / 60).ToString("0.#") : saved.ToString("0");
+        const string Dash = "–";
+        bool hasSpeed = minutes > 0.05;
+        StatWpm.Text = hasSpeed ? Math.Round(words / minutes).ToString("N0") : Dash;
+        StatWpmUnit.Text = hasSpeed ? " wpm" : "";
+        StatCountLabel.Text = items.Count == 1 ? "dictation" : "dictations";
 
-        if (!_statsAnimated && items.Count > 0 && Theme.MotionEnabled)
+        // Typing at 40 words a minute against the time actually spent speaking.
+        double saved = Math.Max(0, words / 40.0 - minutes);
+        (StatSaved.Text, StatSavedUnit.Text) =
+            none ? (Dash, "") :
+            saved < 1 ? ("<1", " min") :
+            saved < 60 ? (Math.Round(saved).ToString("0"), " min") :
+            ((saved / 60).ToString("0.#"), " h");
+
+        MuteEmptyStats(none, hasSpeed);
+        var perDay = WordsPerDay(items);
+        Spark.ToolTip = SparkSummary(perDay);
+
+        if (!_statsAnimated && !none && Theme.MotionEnabled)
         {
-            // Numbers count up once, the first time Home opens in a session.
+            // Numbers count up once, the first time Home opens in a session; the week's bars rise with them.
             _statsAnimated = true;
             var started = DateTime.UtcNow;
             var timer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
@@ -149,18 +197,118 @@ public partial class MainWindow : Window
                 double eased = 1 - Math.Pow(1 - t, 3);
                 StatWords.Text = Math.Round(words * eased).ToString("N0");
                 StatCount.Text = Math.Round(items.Count * eased).ToString("N0");
+                SetSpark(perDay, eased);
                 if (t >= 1) { timer.Stop(); RefreshStats(); }
             };
-            StatWpm.Text = wpm;
-            StatSaved.Text = savedText;
             timer.Start();
             return;
         }
 
-        StatWords.Text = items.Count == 0 ? "-" : words.ToString("N0");
-        StatCount.Text = items.Count == 0 ? "-" : items.Count.ToString("N0");
-        StatWpm.Text = wpm;
-        StatSaved.Text = savedText;
+        StatWords.Text = none ? Dash : words.ToString("N0");
+        StatCount.Text = none ? Dash : items.Count.ToString("N0");
+        SetSpark(perDay, 1);
+    }
+
+    /// <summary>A dash stands in for a number that does not exist yet, so it is muted, never in voice.</summary>
+    private void MuteEmptyStats(bool none, bool hasSpeed)
+    {
+        StatWords.SetResourceReference(TextBlock.ForegroundProperty, none ? "InkMuted" : "VoiceInk");
+        StatCount.SetResourceReference(TextBlock.ForegroundProperty, none ? "InkMuted" : "Ink");
+        StatWpm.SetResourceReference(TextElement.ForegroundProperty, hasSpeed ? "Ink" : "InkMuted");
+        StatSaved.SetResourceReference(TextElement.ForegroundProperty, none ? "InkMuted" : "Ink");
+    }
+
+    /// <summary>Words dictated on each of the last seven days, oldest first; the last one is today.</summary>
+    private static int[] WordsPerDay(IReadOnlyList<HistoryEntry> items)
+    {
+        var days = new int[7];
+        var today = DateTime.Today;
+        foreach (var item in items)
+        {
+            int ago = (today - item.Time.Date).Days;
+            if (ago is >= 0 and < 7) days[6 - ago] += item.Words;
+        }
+        return days;
+    }
+
+    private static string SparkSummary(int[] perDay)
+    {
+        int week = perDay.Sum();
+        string Words(int n) => n == 1 ? "1 word" : $"{n:N0} words";
+        return week == 0 ? "No words in the last 7 days." : $"Last 7 days: {Words(week)}. Today: {Words(perDay[6])}.";
+    }
+
+    private void BuildSpark()
+    {
+        for (int i = 0; i < _sparkBars.Length; i++)
+        {
+            var bar = new Border
+            {
+                Width = 4, Height = 3, CornerRadius = new CornerRadius(2),
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(i == 0 ? 0 : 3, 0, 0, 0),
+            };
+            _sparkBars[i] = bar;
+            Spark.Children.Add(bar);
+        }
+    }
+
+    /// <summary>Bar heights follow the week's words; empty days keep a 3px stub. Today, the last bar, is the caret.</summary>
+    private void SetSpark(int[] perDay, double progress)
+    {
+        double max = Math.Max(1, perDay.Max());
+        for (int i = 0; i < _sparkBars.Length; i++)
+        {
+            var bar = _sparkBars[i];
+            bar.Height = 3 + 21 * (perDay[i] / max) * progress;
+            string brush = i == _sparkBars.Length - 1 ? "Voice" : perDay[i] > 0 ? "LineStrong" : "Line";
+            bar.SetResourceReference(Border.BackgroundProperty, brush);
+        }
+    }
+
+    private bool MatchesSearch(object obj)
+    {
+        if (_emptyDemo) return false;
+        if (_query.Length == 0) return true;
+        return obj is HistoryEntry e &&
+               (e.Text.Contains(_query, StringComparison.CurrentCultureIgnoreCase) ||
+                e.App.Contains(_query, StringComparison.CurrentCultureIgnoreCase));
+    }
+
+    /// <summary>Which of the list, the first-run state and the no-match line is showing.</summary>
+    private void RefreshListState()
+    {
+        bool none = HistoryItems.Count == 0;
+        bool noMatch = !none && _historyView.IsEmpty;
+        HistoryEmpty.Visibility = none ? Visibility.Visible : Visibility.Collapsed;
+        HistoryNoMatch.Visibility = noMatch ? Visibility.Visible : Visibility.Collapsed;
+        HistoryList.Visibility = none || noMatch ? Visibility.Hidden : Visibility.Visible;
+        // Nothing to search or clear yet.
+        HistorySearch.IsEnabled = !none;
+        ClearHistoryButton.IsEnabled = !none;
+        if (noMatch) HistoryNoMatch.Text = $"No dictations match “{_query}”.";
+    }
+
+    /// <summary>"Today" and "Yesterday" move on at midnight, so regroup when the date has changed.</summary>
+    private void KeepDayLabelsCurrent()
+    {
+        if (_viewDay == DateTime.Today) return;
+        _viewDay = DateTime.Today;
+        _historyView.Refresh();
+    }
+
+    private void HistorySearch_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        _query = HistorySearch.Text.Trim();
+        _historyView.Refresh();
+        RefreshListState();
+    }
+
+    private void HistorySearch_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape || HistorySearch.Text.Length == 0) return;
+        HistorySearch.Clear();
+        e.Handled = true;
     }
 
     private void RefreshModelTag()
@@ -181,18 +329,95 @@ public partial class MainWindow : Window
     {
         if (sender is not Button { Tag: HistoryEntry entry } button) return;
         if (!TextInjector.TrySetText(entry.Text)) return;
-        button.Content = "Copied";
+        // Say what happened: a tick in the colour of landed text, held for two seconds even if the pointer leaves.
+        button.Content = Ui.GlyphLabel(Glyphs.Check, "Copied", "Script");
+        button.Opacity = 1;
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        timer.Tick += (_, _) => { timer.Stop(); button.Content = "Copy"; };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            button.Content = Ui.GlyphLabel(Glyphs.Copy, "Copy");
+            button.ClearValue(OpacityProperty);
+        };
         timer.Start();
     }
 
     private void ClearHistory_Click(object sender, RoutedEventArgs e)
     {
-        if (_app.History.Items.Count == 0) return;
+        if (_emptyDemo || _app.History.Items.Count == 0) return;
         if (MessageBox.Show(this, "Delete all dictation history? This cannot be undone.", "Murmur",
                 MessageBoxButton.OKCancel, MessageBoxImage.Warning) == MessageBoxResult.OK)
             _app.History.Clear();
+    }
+
+    // ---------- tables ----------
+
+    private void AddWord_Click(object sender, RoutedEventArgs e) => AddRow(DictionaryGrid, S.Dictionary, new DictionaryEntry());
+    private void AddSnippet_Click(object sender, RoutedEventArgs e) => AddRow(SnippetGrid, S.Snippets, new Snippet());
+    private void AddAppStyle_Click(object sender, RoutedEventArgs e) => AddRow(StyleGrid, S.AppStyles, new AppStyleRule());
+
+    /// <summary>Adds a row at the bottom and opens its first cell for typing.</summary>
+    private void AddRow<T>(DataGrid grid, ObservableCollection<T> list, T item) where T : class
+    {
+        CommitGrids();
+        _added.Add(item); // first, so the empty-state line is already hidden when the row appears
+        list.Add(item);
+        grid.SelectedItem = item;
+        grid.ScrollIntoView(item);
+        Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+        {
+            if (!list.Contains(item)) return;
+            grid.UpdateLayout();
+            grid.CurrentCell = new DataGridCellInfo(item, grid.Columns[0]);
+            if (grid.Columns[0].GetCellContent(item)?.Parent is DataGridCell cell) cell.Focus();
+            grid.BeginEdit();
+        });
+    }
+
+    private void RemoveRow_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: { } item }) return;
+        CommitGrids();
+        switch (item)
+        {
+            case DictionaryEntry d: S.Dictionary.Remove(d); break;
+            case Snippet s: S.Snippets.Remove(s); break;
+            case AppStyleRule r: S.AppStyles.Remove(r); break;
+        }
+        _added.Remove(item);
+        RefreshTableEmpty();
+    }
+
+    private void OnTableChanged(object? sender, NotifyCollectionChangedEventArgs e) => RefreshTableEmpty();
+
+    /// <summary>
+    /// A table's empty-state line shows while it has no filled-in rows (an old blank row counts as empty),
+    /// and hides as soon as a row is being added, so it never sits under the row being typed.
+    /// </summary>
+    private void RefreshTableEmpty()
+    {
+        static bool Blank(string? s) => string.IsNullOrWhiteSpace(s);
+        static Visibility Show(bool empty) => empty ? Visibility.Visible : Visibility.Collapsed;
+        bool adding = _added.Count > 0;
+        DictionaryEmpty.Visibility = Show(!adding && S.Dictionary.All(d => Blank(d.Term) && Blank(d.MisheardAs)));
+        SnippetsEmpty.Visibility = Show(!adding && S.Snippets.All(s => Blank(s.Trigger) && Blank(s.Expansion)));
+        StyleEmpty.Visibility = Show(!adding && S.AppStyles.All(r => Blank(r.App)));
+    }
+
+    private void PruneBlankRows()
+    {
+        static bool Blank(string? s) => string.IsNullOrWhiteSpace(s);
+        foreach (var item in _added)
+        {
+            switch (item)
+            {
+                case DictionaryEntry d when Blank(d.Term) && Blank(d.MisheardAs): S.Dictionary.Remove(d); break;
+                case Snippet s when Blank(s.Trigger) && Blank(s.Expansion): S.Snippets.Remove(s); break;
+                case AppStyleRule r when Blank(r.App): S.AppStyles.Remove(r); break;
+            }
+        }
+        _added.Clear();
+        RefreshTableEmpty();
     }
 
     // ---------- hotkeys ----------
@@ -202,6 +427,8 @@ public partial class MainWindow : Window
         DictateHotkeyButton.Content = Ui.Keys(S.DictateHotkey);
         CommandHotkeyButton.Content = Ui.Keys(S.CommandHotkey);
         HotkeyHintKeys.Content = Ui.Keys(S.DictateHotkey);
+        Ui.Sentence(HeroHint, "Hold ", S.DictateHotkey, " and talk, or double-tap it to go hands-free.");
+        Ui.Sentence(EmptyHint, "Click into any text field, hold ", S.DictateHotkey, " and talk.");
         // Keycap content has no text of its own for a screen reader.
         AutomationProperties.SetName(DictateHotkeyButton, "Dictate hotkey, " + HotkeyService.Describe(S.DictateHotkey));
         AutomationProperties.SetName(CommandHotkeyButton, "Command mode hotkey, " + HotkeyService.Describe(S.CommandHotkey));
@@ -321,9 +548,46 @@ public partial class MainWindow : Window
     protected override void OnClosing(CancelEventArgs e)
     {
         _app.Hotkeys.CancelCapture();
+        CommitGrids();
+        PruneBlankRows();
         CommitAndSave();
+        S.Dictionary.CollectionChanged -= OnTableChanged;
+        S.Snippets.CollectionChanged -= OnTableChanged;
+        S.AppStyles.CollectionChanged -= OnTableChanged;
         _app.History.Changed -= RefreshStats;
         _app.Controller.ModelChanged -= RefreshModelTag;
         base.OnClosing(e);
     }
+}
+
+/// <summary>History group header: Today, Yesterday, then the weekday and date.</summary>
+public sealed class DayNameConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (value is not DateTime day) return "";
+        var today = DateTime.Today;
+        if (day == today) return "Today";
+        if (day == today.AddDays(-1)) return "Yesterday";
+        return day.Year == today.Year ? day.ToString("dddd d MMMM") : day.ToString("dddd d MMMM yyyy");
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => Binding.DoNothing;
+}
+
+/// <summary>History group header, right side: how many dictations and words that day. Values: ItemCount, Items.</summary>
+public sealed class DayTotalsConverter : IMultiValueConverter
+{
+    public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (values.Length < 2 || values[1] is not IEnumerable items) return "";
+        int count = 0, words = 0;
+        foreach (var item in items)
+            if (item is HistoryEntry entry) { count++; words += entry.Words; }
+        string dictations = count == 1 ? "1 dictation" : $"{count:N0} dictations";
+        string wordText = words == 1 ? "1 word" : $"{words:N0} words";
+        return $"{dictations} · {wordText}";
+    }
+
+    public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) => [];
 }
