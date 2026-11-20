@@ -66,6 +66,14 @@ public sealed class DictationController
         hotkeys.Interrupted += () => { if (_state is State.Holding) Cancel(silent: true); };
         hotkeys.Escape += () => { if (IsRecording) Cancel(silent: false); };
         hotkeys.ShouldSwallowEscape = () => IsRecording;
+
+        // The card's own buttons: stop finishes and inserts, close cancels (or dismisses a message).
+        overlay.StopRequested += () => { if (IsRecording) _ = StopAndProcessAsync(); };
+        overlay.CancelRequested += () =>
+        {
+            if (IsRecording) Cancel(silent: false);
+            else if (_state == State.Idle) _overlay.HideNow();
+        };
     }
 
     /// <summary>Called at startup and when the model setting changes: download + load in the background.</summary>

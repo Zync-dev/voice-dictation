@@ -75,7 +75,8 @@ public partial class App : Application
         CreateTray();
         Theme.Changed += RefreshTrayIcon;
         Overlay.Start(Settings.ShowRestPill);
-        if (e.Args.Contains("--pill-demo")) _ = PillDemoAsync();
+        if (e.Args.Contains("--pill-demo"))
+            PillDemoAsync().ContinueWith(t => Log.Write("Pill demo failed: " + t.Exception), TaskContinuationOptions.OnlyOnFaulted);
 
         _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
         var listener = new Thread(() =>

@@ -94,7 +94,7 @@ public class AppSettings
     public bool RestoreClipboard { get; set; } = true;
     public bool Sounds { get; set; } = true;
     /// <summary>Keep the small resting pill on screen between dictations.</summary>
-    public bool ShowRestPill { get; set; } = true;
+    public bool ShowRestPill { get; set; }
     public bool LaunchAtStartup { get; set; }
 
     public string DefaultStyle { get; set; } = Styles.Neutral;
