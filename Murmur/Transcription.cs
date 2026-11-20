@@ -21,7 +21,7 @@ public record LocalModel(string Id, string File, string Label)
     ];
 
     public static LocalModel Get(string id) => All.FirstOrDefault(m => m.Id == id) ?? All[1];
-    public string Path => System.IO.Path.Combine(AppSettings.DataDir, "models", File);
+    public string Path => System.IO.Path.Combine(AppSettings.DefaultDataDir, "models", File);
     public string Url => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/" + File;
 }
 

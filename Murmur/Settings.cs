@@ -108,8 +108,15 @@ public class AppSettings
 
     // ---- persistence ----
 
-    public static string DataDir { get; } =
+    /// <summary>The real data folder; speech models always live here so test runs do not download them again.</summary>
+    public static string DefaultDataDir { get; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Murmur");
+
+    /// <summary>Settings, history and log. MURMUR_DATA_DIR points test runs at a separate folder, never touching the user's data.</summary>
+    public static string DataDir { get; } = Environment.GetEnvironmentVariable("MURMUR_DATA_DIR") is { Length: > 0 } dir ? dir : DefaultDataDir;
+
+    /// <summary>True for a test run with its own data folder; it also runs as its own instance.</summary>
+    public static bool IsTestInstance => DataDir != DefaultDataDir;
 
     private static string FilePath => Path.Combine(DataDir, "settings.json");
     internal static readonly JsonSerializerOptions Json = new() { WriteIndented = true };

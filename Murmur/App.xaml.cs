@@ -10,8 +10,9 @@ namespace Murmur;
 
 public partial class App : Application
 {
-    private const string MutexName = "Murmur.SingleInstance";
-    private const string ShowEventName = "Murmur.ShowWindow";
+    // A test run with its own data folder (MURMUR_DATA_DIR) is its own instance, so it can run beside the real app.
+    private static string MutexName => AppSettings.IsTestInstance ? "Murmur.SingleInstance.Test" : "Murmur.SingleInstance";
+    private static string ShowEventName => AppSettings.IsTestInstance ? "Murmur.ShowWindow.Test" : "Murmur.ShowWindow";
 
     private Mutex? _mutex;
     private EventWaitHandle? _showEvent;
