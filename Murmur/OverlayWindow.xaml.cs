@@ -278,6 +278,39 @@ public partial class OverlayWindow : Window
         Animate(Glow, OpacityProperty, 0.18 + _level * 0.55, Theme.DurInstant, null);
     }
 
+    // ---- AUDIO: hands-free auto-stop countdown ----
+
+    private bool _autoStopShown;
+
+    /// <summary>
+    /// Hands-free is about to finish by itself: the hairline along the bottom of the card (the same one that times the
+    /// inserted text) runs out over the seconds left. A negative value takes it away again, for when speech resumes.
+    /// Without motion the line stays full and still.
+    /// </summary>
+    public void ShowAutoStop(double secondsLeft)
+    {
+        if (secondsLeft < 0 || !IsLive)
+        {
+            if (!_autoStopShown) return;
+            _autoStopShown = false;
+            if (!IsLive) return; // the next state has already set the line up its own way
+            CountdownScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            CountdownScale.ScaleX = 1;
+            Countdown.Opacity = 0;
+            return;
+        }
+        // Already running, unless a state change (say, hands-free turning into command mode) has reset the line.
+        if (_autoStopShown && Countdown.Opacity > 0) return;
+        _autoStopShown = true;
+        Countdown.Opacity = 0.7;
+        CountdownScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        CountdownScale.ScaleX = 1;
+        if (Theme.MotionEnabled)
+            CountdownScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, 0, new Duration(TimeSpan.FromSeconds(Math.Max(0.05, secondsLeft)))));
+    }
+
+    // ---- end AUDIO ----
+
     // ---------- text above the status line ----------
 
     private double TextWidth => TextCardWidth - Pill.BorderThickness.Left - Pill.BorderThickness.Right - 22 - 14 - TextHost.Padding.Right;

@@ -106,6 +106,21 @@ public class AppSettings
     public ObservableCollection<Snippet> Snippets { get; set; } = [];
     public ObservableCollection<AppStyleRule> AppStyles { get; set; } = [];
 
+    // ---- AUDIO ----
+
+    /// <summary>Hands-free only: finish and insert by itself after <see cref="HandsFreeAutoStopSeconds"/> of silence following speech.</summary>
+    public bool HandsFreeAutoStop { get; set; } = true;
+    /// <summary>Seconds of silence after speech before hands-free finishes by itself.</summary>
+    public double HandsFreeAutoStopSeconds { get; set; } = 2.0;
+    /// <summary>Lift quiet speech (whispering) with an automatic gain before transcription.</summary>
+    public bool WhisperMode { get; set; }
+    /// <summary>Remove steady background noise (fan, hum) before transcription.</summary>
+    public bool NoiseSuppression { get; set; } = true;
+    /// <summary>Cut silence at the start and end and shorten long pauses before transcription.</summary>
+    public bool TrimSilence { get; set; } = true;
+
+    // ---- end AUDIO ----
+
     // ---- persistence ----
 
     /// <summary>The real data folder; speech models always live here so test runs do not download them again.</summary>

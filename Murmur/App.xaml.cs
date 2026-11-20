@@ -27,6 +27,8 @@ public partial class App : Application
     /// <summary>Developer aid: --page=N opens the window on that page (0 Home .. 4 Settings).</summary>
     public int StartPage { get; private set; }
     public ImageSource? AppIcon { get; private set; }
+    /// <summary>AUDIO: an audio setting changed outside the Settings page (the tray's whisper mode toggle).</summary>
+    public event Action? AudioSettingsChanged;
 
     [System.Runtime.InteropServices.DllImport("ucrtbase.dll", CharSet = System.Runtime.InteropServices.CharSet.Ansi)]
     private static extern int _putenv_s(string name, string value);
@@ -74,6 +76,13 @@ public partial class App : Application
             return;
         }
 
+        // ---- AUDIO: developer test of the audio clean-up ----
+        if (e.Args.Length == 3 && e.Args[0] == "--audiotest")
+        {
+            _ = AudioTest.RunAsync(e.Args[1], e.Args[2]);
+            return;
+        }
+
         if (e.Args.Length == 3 && e.Args[0] == "--live-bench")
         {
             _ = LivePreview.BenchAsync(e.Args[1], e.Args[2]);
@@ -108,6 +117,8 @@ public partial class App : Application
         Overlay.Start(Settings.ShowRestPill);
         if (e.Args.Contains("--pill-demo"))
             PillDemoAsync().ContinueWith(t => Log.Write("Pill demo failed: " + t.Exception), TaskContinuationOptions.OnlyOnFaulted);
+        // AUDIO: the hands-free auto-stop countdown and the tray's whisper mode item, grabbed to a folder.
+        if (e.Args.FirstOrDefault(a => a.StartsWith("--autostop-demo=")) is { } audioDemo) _ = AudioDemo.RunAsync(this, audioDemo[16..]);
 
         _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
         var listener = new Thread(() =>
@@ -526,6 +537,18 @@ public partial class App : Application
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Open Murmur", null, (_, _) => ShowMainWindow());
+        // ---- AUDIO: whisper mode quick toggle ----
+        var whisper = new Forms.ToolStripMenuItem("Whisper mode") { CheckOnClick = true, Checked = Settings.WhisperMode, ToolTipText = "Lifts quiet speech so whispering is understood" };
+        whisper.CheckedChanged += (_, _) =>
+        {
+            if (Settings.WhisperMode == whisper.Checked) return;
+            Settings.WhisperMode = whisper.Checked;
+            Settings.Save();
+            AudioSettingsChanged?.Invoke();
+        };
+        menu.Opening += (_, _) => whisper.Checked = Settings.WhisperMode;
+        menu.Items.Add(whisper);
+        // ---- end AUDIO ----
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Quit", null, (_, _) => Quit());
 

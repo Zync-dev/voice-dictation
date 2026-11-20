@@ -16,6 +16,9 @@ public sealed class AudioRecorder
     /// <summary>RMS level of the latest audio buffer (0..1). Raised on a background thread.</summary>
     public event Action<float>? Level;
 
+    /// <summary>Live speech detection on everything recorded since Start (hands-free auto-stop).</summary>
+    public SpeechActivity Activity { get; } = new();
+
     public static List<string> Devices()
     {
         var list = new List<string>();
@@ -34,7 +37,7 @@ public sealed class AudioRecorder
             if (idx >= 0) device = idx;
         }
 
-        lock (_gate) _samples = new List<float>(SampleRate * 30);
+        lock (_gate) { _samples = new List<float>(SampleRate * 30); Activity.Reset(); }
         var wave = new WaveIn
         {
             DeviceNumber = device,
@@ -58,6 +61,7 @@ public sealed class AudioRecorder
             {
                 float s = BitConverter.ToInt16(e.Buffer, i * 2) / 32768f;
                 _samples.Add(s);
+                Activity.Add(s);
                 sum += s * s;
             }
         }

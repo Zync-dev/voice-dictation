@@ -25,6 +25,8 @@ public sealed class DictationController
     private readonly TextProcessor _processor;
     private readonly DispatcherTimer _tapTimer = new() { Interval = DoubleTapWindow };
     private readonly DispatcherTimer _maxTimer = new() { Interval = MaxRecording };
+    // ---- AUDIO: hands-free auto-stop ----
+    private readonly DispatcherTimer _autoStopTimer = new() { Interval = TimeSpan.FromMilliseconds(50) };
 
     private State _state = State.Idle;
     private HotkeyKind _mode;
@@ -74,6 +76,7 @@ public sealed class DictationController
 
         _tapTimer.Tick += (_, _) => { _tapTimer.Stop(); if (_state == State.TapPending) Cancel(silent: true); };
         _maxTimer.Tick += (_, _) => { _maxTimer.Stop(); if (IsRecording) _ = StopAndProcessAsync(); };
+        _autoStopTimer.Tick += (_, _) => AutoStopTick();
 
         hotkeys.Down += OnDown;
         hotkeys.Up += OnUp;
@@ -153,6 +156,7 @@ public sealed class DictationController
                 _state = State.HandsFree;
                 _ignoreNextUp = true;
                 _overlay.ShowRecording(_mode, true);
+                _autoStopTimer.Start();
                 break;
             case State.HandsFree:
                 _ignoreNextUp = true;
@@ -184,6 +188,7 @@ public sealed class DictationController
             // A new dictation replaces whatever the card held; a rewrite still waiting must not paste over it.
             _rewriteCts?.Cancel();
             _last = null;
+            _recorder.Activity.Whisper = _settings.WhisperMode;
             _recorder.Start(_settings.Microphone);
             _maxTimer.Start();
             _overlay.ShowRecording(_mode, false);
@@ -203,6 +208,7 @@ public sealed class DictationController
     {
         _tapTimer.Stop();
         _maxTimer.Stop();
+        _autoStopTimer.Stop();
         _recorder.Stop();
         StopPreview();
         _state = State.Idle;
@@ -216,6 +222,7 @@ public sealed class DictationController
         if (!IsRecording) return;
         _tapTimer.Stop();
         _maxTimer.Stop();
+        _autoStopTimer.Stop();
         _state = State.Processing;
         var mode = _mode;
         var samples = _recorder.Stop();
@@ -227,18 +234,25 @@ public sealed class DictationController
         {
             var totalWatch = System.Diagnostics.Stopwatch.StartNew();
             double seconds = samples.Length / (double)AudioRecorder.SampleRate;
-            if (seconds < 0.3 || AudioRecorder.Rms(samples) < 0.0015f)
+            if (seconds < 0.3 || AudioRecorder.Rms(samples) < AudioProcessing.SilenceRms(_settings.WhisperMode))
             {
                 _overlay.Flash("Didn't hear anything", seconds: 1.5);
                 return;
             }
+            // ---- AUDIO: the clean-up runs on a worker thread while the app context and selection are read ----
+            var cleanup = AudioCleanup.From(_settings);
+            var recorded = samples;
+            var audio = Task.Run(() => (AudioProcessing.Prepare(recorded, cleanup, out var report), report));
 
             _overlay.ShowBusy(mode == HotkeyKind.Command ? "Thinking" : "Writing");
             var context = ActiveWindowInfo.Get();
             // Ctrl+C in a terminal is "interrupt the running program", so never probe for a selection there.
             string selection = mode == HotkeyKind.Command && !context.IsTerminal ? await TextInjector.CopySelectionAsync() : "";
 
-            AudioRecorder.Normalize(samples);
+            // ---- AUDIO: noise suppression, silence trimming and gain, off the UI thread ----
+            var (prepared, audioReport) = await audio;
+            samples = prepared;
+            Log.Write($"Audio {cleanup}: {audioReport}");
             var transcript = await _transcriber.TranscribeAsync(samples, _processor.VocabularyPrompt(), previews: preview?.Session);
             // A model that failed at startup may have loaded now; keep the Home tag truthful.
             if (_settings.Engine == SttEngine.Local && Model != ModelState.Ready) SetModel(ModelState.Ready);
@@ -289,6 +303,29 @@ public sealed class DictationController
         {
             _state = State.Idle;
         }
+    }
+
+    // ---------- AUDIO: hands-free auto-stop ----------
+
+    /// <summary>
+    /// Hands-free finishes by itself once the speaker has been quiet for the chosen time after some speech. Never
+    /// before any speech, and a shorter pause mid-sentence only restarts the wait. The card's hairline runs out over
+    /// the last second so the stop is never a surprise.
+    /// </summary>
+    private void AutoStopTick()
+    {
+        if (_state != State.HandsFree) { _autoStopTimer.Stop(); return; }
+        if (!_settings.HandsFreeAutoStop) { _overlay.ShowAutoStop(-1); return; }
+        var activity = _recorder.Activity;
+        double limit = Math.Max(0.5, _settings.HandsFreeAutoStopSeconds);
+        double left = activity.HeardSpeech ? limit - activity.SilenceSeconds : double.PositiveInfinity;
+        if (left <= 0)
+        {
+            Log.Write($"Hands-free auto-stop after {limit:0.0}s of silence ({activity.Seconds:0.0}s recorded)");
+            _ = StopAndProcessAsync();
+            return;
+        }
+        _overlay.ShowAutoStop(left < 1 ? left : -1);
     }
 
     // ---------- live text ----------

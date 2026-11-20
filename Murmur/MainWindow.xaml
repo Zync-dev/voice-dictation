@@ -656,6 +656,49 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ==== AUDIO: sound clean-up and hands-free auto-stop (MainWindow.xaml.cs, AUDIO block) ==== -->
+                <TextBlock x:Name="SoundHeading" Style="{StaticResource SectionHeading}" Text="Sound"/>
+                <Border Style="{StaticResource SettingsCard}">
+                    <StackPanel>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Finish hands-free by itself"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="When you stop talking for this long, the text goes in. The line under the card runs out first."/>
+                            </StackPanel>
+                            <ComboBox x:Name="AutoStopBox" Grid.Column="1" VerticalAlignment="Center" SelectionChanged="AudioSetting_Changed" AutomationProperties.Name="Finish hands-free by itself"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Whisper mode"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Lifts quiet speech so whispering is understood. Also in the tray menu."/>
+                            </StackPanel>
+                            <CheckBox x:Name="WhisperModeBox" Grid.Column="1" Click="AudioSetting_Changed" AutomationProperties.Name="Whisper mode"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Reduce background noise"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Takes out steady sound like a fan or hum before the speech model listens."/>
+                            </StackPanel>
+                            <CheckBox x:Name="NoiseSuppressionBox" Grid.Column="1" Click="AudioSetting_Changed" AutomationProperties.Name="Reduce background noise"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Trim silence"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Cuts the quiet before and after you speak and shortens long pauses, so the text comes back sooner."/>
+                            </StackPanel>
+                            <CheckBox x:Name="TrimSilenceBox" Grid.Column="1" Click="AudioSetting_Changed" AutomationProperties.Name="Trim silence"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+                <!-- ==== end AUDIO ==== -->
+
                 <TextBlock x:Name="DataPathText" Style="{StaticResource Caption}" Margin="0,-8,0,0"/>
             </StackPanel>
         </ScrollViewer>
