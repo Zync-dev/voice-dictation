@@ -60,6 +60,37 @@ Developer switches:
 | `--page=N` | Opens the window on page N (0 Home to 4 Settings) |
 | `--selftest in.wav out.txt` | Runs a 16 kHz mono WAV through transcription and cleanup |
 
+## Learning and context
+
+Settings > Learning and context. Everything here is read through UI Automation (the accessibility interface of Windows apps) on background threads with time limits, and stays on this PC unless noted.
+
+| Feature | How it works |
+| --- | --- |
+| Learns from corrections (on by default) | After a paste Murmur watches that text field for 45 s. When you replace a pasted word with a similar-sounding name or term ("sink" to "Zync", "GitHub-rapport" to "GitHub repository"), it is added to the Dictionary, marked "Learned", and the card says `Learned "Zync"`. Everyday words ("han" to "hun"), numbers and real rewrites are never learned. Remove a wrong entry on the Dictionary page. |
+| Text around the cursor (on by default) | When a dictation starts, Murmur reads the selection or up to 1,500 characters before and 500 after the cursor. Names and terms in it are added to the speech model's word list. With AI polish or Command mode, a trimmed excerpt (at most 1,200 characters, e.g. the email you are replying to) goes to your configured AI model with instructions to use it only for context, never to copy or answer it. The read runs while you speak; if it is not done when you stop, it is skipped, so a dictation never waits for it. |
+| Keeps your English words (on by default) | From your history (the last 1,500 dictations, recent ones weighted higher), the dictionary and the screen, Murmur picks names, brands, acronyms and the English tech words you use in Danish sentences (GitHub, pull request, deploy, repository) and gives them to the speech model as a word list ("Ordliste: ..." for Danish, "Glossary: ..." otherwise), kept within about 150 of Whisper's 224 prompt tokens. Recordings under 2.5 s get only the dictionary. |
+| Never pastes into a password field | If the focused field is a password field, the text is not pasted and not kept in History; the card says "Not pasted into a password field" and Copy puts it on the clipboard if you want it. Password fields are never read or watched. |
+| Excluded apps | Process names, comma separated (`keepass, 1password`). Holding the hotkey there only shows "Murmur is off in Keepass". |
+
+Measured with `--vocab-test` on 22 computer-voice clips (8 Danish, 8 English, 6 mixed Danish/English like "Jeg har lavet en pull request på GitHub repository"), with Danish + English set:
+
+| Clips | No word list | With history and screen words |
+| --- | --- | --- |
+| Mixed, on-device large-v3-turbo-q5 | 31.3% word errors | 20.3% |
+| Mixed, Groq whisper-large-v3 | 35.9% | 18.8% |
+| Danish, on-device | 16.9% | 16.9% |
+| English, on-device | 13.6% | 15.2% (one "10" written "10:00") |
+
+Developer switches for this:
+
+| Switch | What it does |
+| --- | --- |
+| `--learning-test out.txt` | Checks the correction matching, dictionary merging and word list, then opens its own test window (another process) and checks reading text, selections, password fields and learning through UI Automation |
+| `--vocab-test folder out.txt` | Transcribes every WAV in the folder (any rate; references from `*.tsv`: name, language, text) with and without the word list and reports word error rates. `MURMUR_ENGINE=cloud`, `MURMUR_VOCAB_ONLY=mix` and `MURMUR_VOCAB_VARIANTS=none,history+screen` narrow it |
+| `--context-llm-test out.txt` | Five AI polish / Command calls with screen context (copying, name spelling, instructions hidden in the screen text) |
+| `--learning-demo` | Shows the card notes of this feature; `MURMUR_CARD_SHOTS=folder` also saves each as a PNG |
+| `--show-learning` | Opens Settings scrolled to this section (with `--page=4`) |
+
 ## Where data lives
 
 `%AppData%\Murmur` - `settings.json`, `history.json`, `murmur.log` and `models\`. API keys are encrypted with Windows DPAPI for your user account.

@@ -40,7 +40,12 @@ public sealed class DictationController
         public IntPtr Window;
         public string App = "";
         public bool Busy;
+        /// <summary>Learning and context: held back from a password field; only Copy and Esc apply.</summary>
+        public bool NotPasted;
     }
+
+    // ---- Learning and context ----
+    private readonly ContextAssist _assist;
 
     private Insertion? _last;
     private CancellationTokenSource? _rewriteCts;
@@ -60,6 +65,15 @@ public sealed class DictationController
         _overlay = overlay;
         _transcriber = new Transcriber(settings);
         _processor = new TextProcessor(settings, new LlmClient(settings));
+        // Learning and context: personal vocabulary, and a short note when a correction was learned.
+        _assist = new ContextAssist(settings, history, overlay.Dispatcher);
+        _processor.Vocabulary = _assist.Vocabulary;
+        _assist.Learned += term =>
+        {
+            if (IsRecording || _state == State.Processing) return;
+            if (_overlay.IsShowingResult) _overlay.NoteOnResult($"Learned “{term}”", OverlayWindow.Note.Done, seconds: 2.5);
+            else if (!_overlay.IsShowingMessage) _overlay.Flash($"Learned “{term}”", seconds: 2.5);
+        };
 
         var dispatcher = overlay.Dispatcher;
         _recorder.Level += level => dispatcher.BeginInvoke(() => { if (IsRecording) _overlay.PushLevel(level); });
@@ -143,6 +157,11 @@ public sealed class DictationController
         switch (_state)
         {
             case State.Idle:
+                if (_assist.IsExcluded(out string offIn))
+                {
+                    _overlay.Flash($"Murmur is off in {offIn}", seconds: 2);
+                    break;
+                }
                 _mode = kind;
                 _downAt = DateTime.UtcNow;
                 _ignoreNextUp = false;
@@ -188,6 +207,7 @@ public sealed class DictationController
             _maxTimer.Start();
             _overlay.ShowRecording(_mode, false);
             if (_settings.Sounds) Sounds.Start();
+            _assist.BeginDictation(); // reads the text around the cursor in the background
             StartPreview();
             return true;
         }
@@ -235,11 +255,15 @@ public sealed class DictationController
 
             _overlay.ShowBusy(mode == HotkeyKind.Command ? "Thinking" : "Writing");
             var context = ActiveWindowInfo.Get();
+            // Learning and context: the text read when recording began, and the password check (runs alongside transcription).
+            var screen = await _assist.TakeScreenAsync();
+            _processor.Screen = screen;
+            var passwordCheck = _assist.IsPasswordTargetAsync(screen);
             // Ctrl+C in a terminal is "interrupt the running program", so never probe for a selection there.
             string selection = mode == HotkeyKind.Command && !context.IsTerminal ? await TextInjector.CopySelectionAsync() : "";
 
             AudioRecorder.Normalize(samples);
-            var transcript = await _transcriber.TranscribeAsync(samples, _processor.VocabularyPrompt(), previews: preview?.Session);
+            var transcript = await _transcriber.TranscribeAsync(samples, _processor.VocabularyPrompt(seconds), previews: preview?.Session);
             // A model that failed at startup may have loaded now; keep the Home tag truthful.
             if (_settings.Engine == SttEngine.Local && Model != ModelState.Ready) SetModel(ModelState.Ready);
             string raw = TextProcessor.StripArtifacts(transcript.Text);
@@ -255,6 +279,16 @@ public sealed class DictationController
             if (text.Length == 0)
             {
                 _overlay.Flash("Nothing to insert", seconds: 1.5);
+                return;
+            }
+
+            if (await passwordCheck)
+            {
+                // Learning and context: never paste into a password field, and keep it out of History; Copy is on the card.
+                _last = new Insertion { Text = text, Typed = text, Window = Native.GetForegroundWindow(), App = context.Process, NotPasted = true };
+                _overlay.ShowResult(text, context.Process, canRewrite: false, status: "");
+                _overlay.NoteOnResult("Not pasted into a password field", OverlayWindow.Note.Info, seconds: 8);
+                Log.Write("Dictation held back: the focused field is a password field");
                 return;
             }
 
@@ -275,6 +309,7 @@ public sealed class DictationController
             await TextInjector.PasteAsync(toInsert, _settings.RestoreClipboard);
             _last = new Insertion { Text = text, Typed = toInsert, Window = target, App = context.Process };
             _overlay.ShowResult(text, context.Process, _processor.CanRewrite);
+            _assist.AfterPaste(toInsert, target); // Learning and context: watch for corrections
             // One line per dictation, so a slow one can be traced to its cause.
             string live = preview == null ? "live=off" :
                 $"live={preview.Count} previews on {_transcriber.PreviewModel} avg {(preview.Count == 0 ? 0 : preview.TotalMs / preview.Count):0}ms max {preview.MaxMs:0}ms, final waited {_transcriber.LastQueueMs:0}ms";
@@ -287,6 +322,7 @@ public sealed class DictationController
         }
         finally
         {
+            _processor.Screen = null;
             _state = State.Idle;
         }
     }
@@ -326,6 +362,11 @@ public sealed class DictationController
         var last = _last;
         if (action == "close" || last == null) { Dismiss(); return; }
         if (last.Busy || _state != State.Idle) return;
+        if (last.NotPasted && action != "copy")
+        {
+            _overlay.NoteOnResult("Nothing was pasted. Copy it or press Esc.", OverlayWindow.Note.Info, seconds: 4);
+            return;
+        }
 
         switch (action)
         {
@@ -337,6 +378,7 @@ public sealed class DictationController
             case "undo":
                 if (!await IsBackInTargetAsync(last)) return;
                 // One Ctrl+Z takes a paste back out in most apps.
+                _assist.StopWatching();
                 Native.SendChord(Native.VK_CONTROL, (ushort)'Z');
                 _last = null;
                 _overlay.HideNow();
@@ -383,9 +425,11 @@ public sealed class DictationController
                 Words = HistoryStore.CountWords(text)
             });
             // Take the inserted text back out, then paste the new one in its place.
+            _assist.StopWatching();
             Native.SendChord(Native.VK_CONTROL, (ushort)'Z');
             await Task.Delay(60);
             await TextInjector.PasteAsync(typed, _settings.RestoreClipboard);
+            _assist.AfterPaste(typed, last.Window); // Learning and context
             last.Text = text;
             last.Typed = typed;
             _overlay.ShowResult(text, last.App, _processor.CanRewrite, how switch

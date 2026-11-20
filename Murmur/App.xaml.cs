@@ -11,8 +11,10 @@ namespace Murmur;
 public partial class App : Application
 {
     // A test run with its own data folder (MURMUR_DATA_DIR) is its own instance, so it can run beside the real app.
-    private static string MutexName => AppSettings.IsTestInstance ? "Murmur.SingleInstance.Test" : "Murmur.SingleInstance";
-    private static string ShowEventName => AppSettings.IsTestInstance ? "Murmur.ShowWindow.Test" : "Murmur.ShowWindow";
+    private static string MutexName => AppSettings.IsTestInstance ? "Murmur.SingleInstance.Test" + TestFolderTag : "Murmur.SingleInstance";
+    private static string ShowEventName => AppSettings.IsTestInstance ? "Murmur.ShowWindow.Test" + TestFolderTag : "Murmur.ShowWindow";
+    /// <summary>Test runs with different data folders do not get in each other's way either.</summary>
+    private static string TestFolderTag => "." + string.Concat(AppSettings.DataDir.ToLowerInvariant().Where(char.IsLetterOrDigit).TakeLast(48));
 
     private Mutex? _mutex;
     private EventWaitHandle? _showEvent;
@@ -49,6 +51,8 @@ public partial class App : Application
     {
         TuneGraphicsBackend();
         base.OnStartup(e);
+
+        if (LearningTests.TryRun(this, e.Args)) return; // Learning and context: developer checks
 
         if (e.Args.Length == 3 && e.Args[0] == "--eval")
         {
@@ -108,6 +112,7 @@ public partial class App : Application
         Overlay.Start(Settings.ShowRestPill);
         if (e.Args.Contains("--pill-demo"))
             PillDemoAsync().ContinueWith(t => Log.Write("Pill demo failed: " + t.Exception), TaskContinuationOptions.OnlyOnFaulted);
+        if (e.Args.Contains("--learning-demo")) _ = LearningTests.CardDemoAsync(Overlay); // Learning and context
 
         _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
         var listener = new Thread(() =>

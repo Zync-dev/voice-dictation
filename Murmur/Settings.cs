@@ -14,6 +14,10 @@ public class DictionaryEntry
     public string Term { get; set; } = "";
     /// <summary>Optional: what the speech model tends to write instead (comma separated).</summary>
     public string MisheardAs { get; set; } = "";
+
+    // ---- Learning and context ----
+    /// <summary>True when Murmur added this entry itself after seeing you correct a word it pasted.</summary>
+    public bool Learned { get; set; }
 }
 
 public class Snippet : System.ComponentModel.INotifyPropertyChanged
@@ -105,6 +109,22 @@ public class AppSettings
     public ObservableCollection<DictionaryEntry> Dictionary { get; set; } = [];
     public ObservableCollection<Snippet> Snippets { get; set; } = [];
     public ObservableCollection<AppStyleRule> AppStyles { get; set; } = [];
+
+    // ---- Learning and context ----
+    /// <summary>
+    /// After a paste, watch the text field for about 45 s; when you replace a pasted word with a similar one
+    /// ("sink" -> "Zync"), add it to the dictionary. Never watches password fields. Local only.
+    /// </summary>
+    public bool LearnFromCorrections { get; set; } = true;
+    /// <summary>
+    /// Read the text around the cursor (or the selection) when a dictation starts: its names go to the speech model as
+    /// hints and, with AI polish or Command mode, a short excerpt goes to the AI model as context. Never reads password fields.
+    /// </summary>
+    public bool UseScreenContext { get; set; } = true;
+    /// <summary>Give the speech model the names and English tech words you use most (from history and the dictionary), so mixed Danish/English keeps them.</summary>
+    public bool PersonalVocabulary { get; set; } = true;
+    /// <summary>Process names, separated by commas, where Murmur does nothing (for example "keepass, 1password").</summary>
+    public string ExcludedApps { get; set; } = "";
 
     // ---- persistence ----
 

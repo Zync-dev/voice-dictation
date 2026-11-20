@@ -303,6 +303,16 @@
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Term" Binding="{Binding Term}" Width="*" ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEditor}"/>
                             <DataGridTextColumn Header="Misheard as" Binding="{Binding MisheardAs}" Width="*" ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEditor}"/>
+                            <!-- Learning and context: entries Murmur added from a correction you made. -->
+                            <DataGridTemplateColumn Width="112" IsReadOnly="True">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ContentControl Style="{StaticResource Tag}" Content="Learned" Height="20" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                        Focusable="False" Visibility="{Binding Learned, Converter={StaticResource Visible}}"
+                                                        ToolTip="Murmur learned this from a correction you made. Remove it if it is wrong."/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTemplateColumn Width="60" IsReadOnly="True">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate><Button Style="{StaticResource RowRemove}" Tag="{Binding}" Click="RemoveRow_Click"/></DataTemplate>
@@ -655,6 +665,49 @@
                         </Grid>
                     </StackPanel>
                 </Border>
+
+                <!-- ==== Learning and context ==== -->
+                <TextBlock x:Name="LearningHeading" Style="{StaticResource SectionHeading}" Text="Learning and context"/>
+                <Border Style="{StaticResource SettingsCard}">
+                    <StackPanel>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Learn from my corrections"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="When you fix a word Murmur just typed, such as sink to Zync, it goes into the Dictionary. Murmur watches the field for 45 seconds, never a password field."/>
+                            </StackPanel>
+                            <CheckBox x:Name="LearnCorrectionsBox" Grid.Column="1" Click="LearningSetting_Changed" AutomationProperties.Name="Learn from my corrections"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Use text around the cursor"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Names on screen help the speech model spell them. With AI polish, a short excerpt, such as the email you reply to, goes to the AI model as context."/>
+                            </StackPanel>
+                            <CheckBox x:Name="ScreenContextBox" Grid.Column="1" Click="LearningSetting_Changed" AutomationProperties.Name="Use text around the cursor"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Keep my English words"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="The names and English terms you say most, such as GitHub repository or pull request, are given to the speech model so mixed Danish and English keeps them."/>
+                            </StackPanel>
+                            <CheckBox x:Name="PersonalVocabularyBox" Grid.Column="1" Click="LearningSetting_Changed" AutomationProperties.Name="Keep my English words"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Excluded apps"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Murmur does nothing in these apps. Use process names separated by commas, such as keepass, 1password. Murmur never pastes into a password field."/>
+                            </StackPanel>
+                            <TextBox x:Name="ExcludedAppsBox" Grid.Column="1" VerticalAlignment="Center" TextChanged="LearningSetting_Changed" LostFocus="LearningSetting_Changed" AutomationProperties.Name="Excluded apps"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+                <!-- ==== end Learning and context ==== -->
 
                 <TextBlock x:Name="DataPathText" Style="{StaticResource Caption}" Margin="0,-8,0,0"/>
             </StackPanel>

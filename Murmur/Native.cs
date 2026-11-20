@@ -83,6 +83,48 @@ internal static class Native
     }
 
     public static bool IsDown(int vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
+
+    // ---- Learning and context ----
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GUITHREADINFO
+    {
+        public int cbSize, flags;
+        public IntPtr hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret;
+        public int left, top, right, bottom;
+    }
+    [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO info);
+    private const int GWL_STYLE = -16, ES_PASSWORD = 0x20;
+
+    /// <summary>The window that has keyboard focus inside the foreground app (a classic edit box, for example), or zero.</summary>
+    public static IntPtr FocusedChildWindow()
+    {
+        var fg = GetForegroundWindow();
+        if (fg == IntPtr.Zero) return IntPtr.Zero;
+        var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
+        return GetGUIThreadInfo(GetWindowThreadProcessId(fg, out _), ref info) ? info.hwndFocus : IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// A quick check without UI Automation: is the focused control a classic Windows edit box with password style?
+    /// Instant and safe on the UI thread; modern apps are covered by UI Automation (ContextReader).
+    /// </summary>
+    public static bool FocusedEditIsPassword()
+    {
+        try { return IsPasswordEdit(FocusedChildWindow()); }
+        catch { return false; }
+    }
+
+    /// <summary>True for a classic edit box (Edit, RichEdit, WinForms TextBox) with the password style.</summary>
+    public static bool IsPasswordEdit(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return false;
+        var cls = new StringBuilder(64);
+        GetClassName(hwnd, cls, cls.Capacity);
+        string name = cls.ToString();
+        bool edit = name.Equals("Edit", StringComparison.OrdinalIgnoreCase) || name.StartsWith("RichEdit", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith("WindowsForms10.EDIT", StringComparison.OrdinalIgnoreCase);
+        return edit && (GetWindowLong(hwnd, GWL_STYLE) & ES_PASSWORD) != 0;
+    }
 }
 
 

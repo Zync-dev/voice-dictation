@@ -112,6 +112,7 @@ public partial class MainWindow : Window
         CustomInstructionsBox.Text = S.CustomInstructions;
 
         DataPathText.Text = "Settings, history and speech models are stored in " + AppSettings.DataDir;
+        LoadLearningSettings(); // Learning and context (MainWindow.Learning.cs)
 
         _loading = false;
         RefreshHotkeys();

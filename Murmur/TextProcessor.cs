@@ -18,9 +18,19 @@ public sealed partial class TextProcessor
         _llm = llm;
     }
 
+    // ---- Learning and context ----
+    /// <summary>The personal vocabulary (dictionary, history, screen); when set it builds the speech model prompt.</summary>
+    public Vocabulary? Vocabulary { get; set; }
+    /// <summary>What was on screen around the cursor for the dictation in progress (set and cleared by the controller).</summary>
+    public ScreenContext? Screen { get; set; }
+    /// <summary>The prompt for a recording of known length: very short ones get only the dictionary (see Vocabulary).</summary>
+    public string VocabularyPrompt(double audioSeconds) => Vocabulary?.BuildPrompt(Screen, audioSeconds) ?? VocabularyPrompt();
+    // ---- end Learning and context ----
+
     /// <summary>Vocabulary hint for the speech model so names and jargon are spelled right first time.</summary>
     public string VocabularyPrompt()
     {
+        if (Vocabulary != null) return Vocabulary.BuildPrompt(Screen);
         var terms = _settings.Dictionary.Select(d => d.Term.Trim()).Where(t => t.Length > 0).Distinct().Take(80).ToList();
         return terms.Count == 0 ? "" : "Glossary: " + string.Join(", ", terms) + ".";
     }
@@ -194,6 +204,7 @@ public sealed partial class TextProcessor
         if (terms.Count > 0) sb.AppendLine("Use these exact spellings where the speaker means them: " + string.Join(", ", terms) + ".");
         if (!string.IsNullOrWhiteSpace(_settings.CustomInstructions))
             sb.AppendLine("Additional user preferences: " + _settings.CustomInstructions.Trim());
+        sb.Append(ContextPrompts.For(Screen, _settings)); // Learning and context: the text around the cursor
 
         var result = await _llm.CompleteAsync(sb.ToString(), $"<transcript>\n{raw}\n</transcript>", ct);
         result = TranscriptTagRegex().Replace(result, "").Trim();
@@ -215,7 +226,8 @@ public sealed partial class TextProcessor
             Return only the text to insert at the cursor: no preamble, no quotes, no markdown fences unless the user asks for code.
             Write in the language of the instruction unless told otherwise.
             """ + $"\nTarget application: \"{context.Process}\" (window: \"{context.Title}\")." +
-            (string.IsNullOrWhiteSpace(_settings.CustomInstructions) ? "" : "\nUser preferences: " + _settings.CustomInstructions.Trim());
+            (string.IsNullOrWhiteSpace(_settings.CustomInstructions) ? "" : "\nUser preferences: " + _settings.CustomInstructions.Trim()) +
+            (string.IsNullOrWhiteSpace(selection) ? ContextPrompts.For(Screen, _settings) : ""); // Learning and context: the text around the cursor
 
         var user = string.IsNullOrWhiteSpace(selection)
             ? $"<instruction>\n{instruction}\n</instruction>"
