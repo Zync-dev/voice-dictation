@@ -64,6 +64,14 @@ public static class LearningTests
         Expect("Jeg har lavet en ny feature til login siden i dag.", "Helt anden tekst som brugeren har skrevet her.", "(rewritten)");
         Expect("Vi mødes hos Mette.", "Vi mødes hos Mette.", "");
         Expect("Det var en god mode i går.", "Det var et godt møde i går.", "(rewritten)");         // grammar/spelling, not a term
+        // The user changing their mind, not a mishearing: never learned.
+        Expect("Let's meet on Monday at ten.", "Let's meet on Sunday at ten.", "");
+        Expect("The release is in June this year.", "The release is in July this year.", "");
+        Expect("Send it to Peter before lunch.", "Send it to Petra before lunch.", "");
+        Expect("Ring til Hansen i morgen.", "Ring til Jensen i morgen.", "");
+        // Thin evidence waits for the same fix in a second dictation.
+        Check(lines, CorrectionLearner.Accept("mark", "Mark", false) is { Tentative: true }, "casing fix mark -> Mark is tentative");
+        Check(lines, CorrectionLearner.Accept("sink", "Zync", false) is { Tentative: false }, "sink -> Zync is learned at once");
 
         // 2. Adding to the dictionary, de-duplicated.
         var dict = new List<DictionaryEntry> { new() { Term = "Murmur", MisheardAs = "murmer" } };

@@ -216,6 +216,17 @@
                                            Text="Press Esc while recording and nothing is typed."/>
                             </StackPanel>
                         </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource StepRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <CheckBox x:Name="ScreenContextBox" VerticalAlignment="Top" Margin="0,2,0,0" Click="ScreenContext_Click"
+                                      AutomationProperties.Name="Use text around the cursor"/>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Style="{StaticResource Label}" Text="Text around the cursor"/>
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,0" TextWrapping="Wrap"
+                                           Text="Murmur reads the text next to the cursor so names come out right. With AI polish, a short excerpt goes to your AI model, which may be a cloud service. Never from password fields or password managers. Turn it off here or in Settings."/>
+                            </StackPanel>
+                        </Grid>
                     </StackPanel>
                 </Border>
             </StackPanel>

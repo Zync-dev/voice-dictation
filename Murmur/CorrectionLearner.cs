@@ -3,8 +3,12 @@ using System.Windows.Automation;
 
 namespace Murmur;
 
-/// <summary>A word the user replaced in pasted text: what Murmur wrote and what the user made of it.</summary>
-public sealed record Correction(string Misheard, string Term);
+/// <summary>
+/// A word the user replaced in pasted text: what Murmur wrote and what the user made of it. <paramref name="Tentative"/>
+/// marks thin evidence (a casing fix, or a name that only half sounds like the word): such a pair is learned only once
+/// the same fix has been made after two separate dictations, since it may be the user changing their mind.
+/// </summary>
+public sealed record Correction(string Misheard, string Term, bool Tentative = false);
 
 /// <summary>
 /// Learns from corrections. After a paste it watches the focused text field for a while through UI Automation, on a
@@ -294,6 +298,8 @@ public sealed class CorrectionLearner
         if (mKey.Length < 2 || tKey.Length < 2 || term.Length > 40) return null;
         if (mKey.All(char.IsDigit) || tKey.All(char.IsDigit)) return null;
         if (IsSmallWord(misheard) || IsSmallWord(term)) return null;
+        // "Monday" -> "Sunday", "juni" -> "juli": the plan changed, nothing was misheard.
+        if (IsCalendarWord(misheard) || IsCalendarWord(term)) return null;
         if (misheard == term) return null;
 
         bool sameWord = mKey == tKey;
@@ -302,12 +308,28 @@ public sealed class CorrectionLearner
         bool termLike = capitals || term.Any(char.IsDigit) || IsKnownTerm(term) || term.Split(' ').Length != misheard.Split(' ').Length;
         if (!termLike) return null;
         if (sameWord)
-            // A casing fix teaches the spelling of the name (the dictionary fixes casing by itself).
-            return capitals && misheard != term ? new Correction(misheard, term) : null;
+            // A casing fix teaches the spelling of the name (the dictionary fixes casing by itself). It may also be an
+            // everyday word that is a name only here ("mark" -> "Mark"), so it needs a second dictation.
+            return capitals && misheard != term ? new Correction(misheard, term, Tentative: true) : null;
 
-        double similar = Math.Max(Similarity(mKey, tKey), Similarity(Fold(mKey), Fold(tKey)));
-        return similar >= 0.5 ? new Correction(misheard, term) : null;
+        double spelled = Similarity(mKey, tKey), sounds = Similarity(Fold(mKey), Fold(tKey));
+        double similar = Math.Max(spelled, sounds);
+        if (similar < 0.5) return null;
+        // Only capitals make it look like a name: "Peter" -> "Petra", "Hansen" -> "Jensen" are edits of content as
+        // often as mishearings. Such a pair must sound much alike, and below 0.85 it waits for a second dictation.
+        // (Any capitalised word passes the known-term test as a name, so that test runs on it in lower case.)
+        bool onlyCapitals = !(term.Any(char.IsDigit) || IsKnownTerm(term.ToLowerInvariant()) || term.Split(' ').Length != misheard.Split(' ').Length);
+        if (onlyCapitals && sounds < 0.7) return null;
+        return new Correction(misheard, term, Tentative: onlyCapitals && sounds < 0.85);
     }
+
+    private static readonly HashSet<string> CalendarWords = new(
+        ("mandag tirsdag onsdag torsdag fredag lørdag søndag januar februar marts april maj juni juli august september oktober november december " +
+         "monday tuesday wednesday thursday friday saturday sunday january february march april may june july august september october november december " +
+         "jan feb mar apr jun jul aug sep sept okt oct nov dec mon tue wed thu fri sat sun yesterday tomorrow today weekend weekenden").Split(' '),
+        StringComparer.OrdinalIgnoreCase);
+
+    private static bool IsCalendarWord(string s) => s.Split(' ').Any(w => CalendarWords.Contains(w.Trim('-', '.')));
 
     private static bool IsKnownTerm(string term) => Vocabulary.IsKnownPhrase(term) ||
         term.Split(' ').Any(w => Vocabulary.ExtractTerms("og " + w + " er").Any());

@@ -50,6 +50,13 @@ public partial class MainWindow
         bool changed = auto != S.AutoUpdate || source != S.UpdateSource ||
                        UpdateTokenBox.Password.Trim() != Secret.Unprotect(S.UpdateTokenProtected);
         if (!changed) return;
+        // A plain http:// source would let anyone on the network path replace the update: refuse it, keep the old one.
+        if (Updater.SourceProblem(source) is { } problem)
+        {
+            UpdateStatusText.Text = problem + " The previous source is kept.";
+            UpdateSourceBox.Text = S.UpdateSource;
+            return;
+        }
         S.AutoUpdate = auto;
         S.UpdateSource = source.Length > 0 ? source : Updater.DefaultSource;
         S.UpdateTokenProtected = token;

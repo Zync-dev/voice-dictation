@@ -83,14 +83,41 @@ public sealed class ContextAssist
     }
 
     /// <summary>
-    /// Is the paste about to go into a password field? Starts at once (call it when recording stops) and is awaited
-    /// just before the paste, so it costs no time of its own. A slow answer counts as "no".
+    /// Was the field a password field when recording stopped? Starts at once and runs alongside transcription, so it
+    /// costs no time of its own. A slow answer counts as "no" here; <see cref="PasteBlockedAsync"/> checks again
+    /// right before the paste.
     /// </summary>
     public async Task<bool> IsPasswordTargetAsync(ScreenContext? atStart)
     {
         if (atStart is { IsPassword: true }) return true;
         return await ContextReader.IsPasswordFocusedAsync(PasswordBudgetMs) == true;
     }
+
+    public enum PasteBlock { None, Excluded, Password, Unchecked }
+
+    /// <summary>
+    /// The check right before Murmur sends keys to the app in front (a paste, Undo's Ctrl+Z, a rewrite), made at that
+    /// moment rather than when recording stopped: focus may have moved to another app or field while the text was
+    /// being written. An answer that does not come in time counts as unknown, and unknown holds the paste back when the
+    /// window in front is not <paramref name="trustedWindow"/> (the one the dictation started in).
+    /// </summary>
+    public async Task<(PasteBlock Block, string App)> PasteBlockedAsync(IntPtr trustedWindow)
+    {
+        if (IsExcluded(out string app)) return (PasteBlock.Excluded, app);
+        if (Native.FocusedEditIsPassword()) return (PasteBlock.Password, "");
+        bool? password = await ContextReader.IsPasswordFocusedAsync(PasswordBudgetMs);
+        if (password == true) return (PasteBlock.Password, "");
+        if (password == null && Native.GetForegroundWindow() != trustedWindow) return (PasteBlock.Unchecked, "");
+        return (PasteBlock.None, "");
+    }
+
+    /// <summary>The card's note for a paste that was held back.</summary>
+    public static string HeldNote(PasteBlock block, string app) => block switch
+    {
+        PasteBlock.Excluded => $"Not pasted: Murmur is off in {app}",
+        PasteBlock.Password => "Not pasted into a password field",
+        _ => "Not pasted: the field could not be checked",
+    };
 
     // ---------- learning from corrections ----------
 
@@ -102,10 +129,18 @@ public sealed class ContextAssist
 
     public void StopWatching() => _learner.Stop();
 
+    /// <summary>Tentative corrections seen after one dictation so far (this session only), waiting for a second.</summary>
+    private readonly HashSet<(string, string)> _seenOnce = [];
+
     /// <summary>Adds a learned pair to the dictionary, merging with an entry for the same term and never duplicating.</summary>
     internal bool AddLearned(Correction c)
     {
         if (!_settings.LearnFromCorrections) return false;
+        if (c.Tentative && _seenOnce.Add((c.Misheard.Trim().ToLowerInvariant(), c.Term.Trim())))
+        {
+            Log.Write($"Correction seen once, learned only if it happens again: \"{c.Misheard}\" -> \"{c.Term}\"");
+            return false;
+        }
         bool added = Merge(_settings.Dictionary, c);
         if (!added) return false;
         _settings.Save();

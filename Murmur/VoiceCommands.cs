@@ -63,7 +63,27 @@ public static partial class VoiceCommands
     private static readonly HashSet<string> MarkObjectVerbs = Set(
         "sætte sætter satte sat sæt bruge bruger brugte brug skrive skriver skrev skriv mangler manglede glemte glemmer glemme " +
         "tilføj tilføje tilføjer fjern fjerne fjerner man er var være dermed så eller " +
-        "put puts use uses used add adds added insert type typed missing forgot without with is was be need needs or");
+        "put puts use uses used add adds added insert type typed missing forgot without with is are was were be need needs or");
+    // An adjective between an article and a punctuation word makes it a noun: "a huge question mark", "et tydeligt punktum",
+    // "det store spørgsmålstegn", "the Oxford comma". Checked together with the word before it (MarkArticles).
+    private static readonly HashSet<string> MarkAdjectives = Set(
+        "stor store stort kæmpe kæmpestor kæmpestort kæmpestore tydelig tydeligt tydelige klar klart klare god godt gode " +
+        "endelig endeligt endelige lille små ekstra ordentlig ordentligt ordentlige rigtig rigtigt rigtige sidste første eneste " +
+        "ny nyt nye manglende overflødig overflødigt overflødige fed fedt fede afgørende vigtig vigtigt vigtige " +
+        "huge big bigger biggest large great giant massive complete full real clear definite small little tiny final last first " +
+        "only extra proper missing stray serial oxford bold important");
+    private static readonly HashSet<string> MarkArticles = new(MarkDeterminers.Concat(Set(
+        "den det de dét min mine din dine sine vores jeres deres hans hendes my your his her our their its")), StringComparer.Ordinal);
+    // Before "ny linje" / "new line": a verb that takes it as its object ("we need new line items", "der mangler linjeskift").
+    private static readonly HashSet<string> LineObjectVerbs = Set(
+        "mangler manglede mangle tilføj tilføje tilføjer tilføjede indsæt indsætte indsætter indsatte brug bruge bruger brugte " +
+        "fjern fjerne fjerner fjernede understøt understøtte understøtter understøttede kræver kræve kræver lav lave laver lavede " +
+        "need needs needed add adds added insert inserts inserted support supports supported use uses used remove removes removed " +
+        "require requires required strip strips stripped handle handles handled missing want wants");
+    // After "ny linje" / "new line": a word that goes on with a noun ("new line items", "new line support", "linjeskift tegn").
+    private static readonly HashSet<string> LineNounFollowers = Set(
+        "items item support character characters char chars break breaks feed feeds separator separators ending endings " +
+        "delimiter delimiters handling mode tegn tegnet tegnene skift håndtering understøttelse");
     private static readonly HashSet<string> NumberWords = Set(
         "nul en et to tre fire fem seks syv otte ni ti elleve tolv tretten fjorten femten tyve tredive fyrre halvtreds hundrede tusind " +
         "zero one two three four five six seven eight nine ten eleven twelve thirteen twenty thirty forty fifty hundred thousand");
@@ -72,7 +92,8 @@ public static partial class VoiceCommands
         "på i til af for fra med om ved efter er var har kan vil skal bliver blev der som hvor nummer " +
         "on in at of for from with about is are was were has have can will should be here there number");
     private static readonly HashSet<string> BulletFollowers = new(NounFollowers.Concat(["og", "and"]), StringComparer.Ordinal);
-    private static readonly HashSet<string> MarkFollowers = Set("for ved over om efter eller about over on or after");
+    private static readonly HashSet<string> MarkFollowers = Set(
+        "for ved over om efter eller about over on or after separated delimited separeret separerede adskilt adskilte");
 
     [GeneratedRegex(@"[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*")]
     private static partial Regex WordRegex();
@@ -133,7 +154,7 @@ public static partial class VoiceCommands
 
     private sealed class Around
     {
-        public string Prev = "", Next = "", PrevSep = "", NextSep = "";
+        public string Prev = "", Prev2 = "", Next = "", PrevSep = "", NextSep = "";
         public bool AtStart, AtEnd;
         public bool PrevBoundary => AtStart || PrevSep.IndexOfAny(['.', '!', '?', ',', ';', ':', '\n']) >= 0;
         public bool SentenceStart => AtStart || PrevSep.IndexOfAny(['.', '!', '?', '\n']) >= 0;
@@ -148,7 +169,12 @@ public static partial class VoiceCommands
         a.AtStart = m.First == 1;
         a.AtEnd = m.Last + 2 >= toks.Count;
         // A word in the sentence before cannot make this one a noun ("Slet det. Punkt brød").
-        if (!a.AtStart && a.PrevSep.IndexOfAny(['.', '!', '?', ':', '\n']) < 0) a.Prev = toks[m.First - 2].Text.ToLowerInvariant();
+        if (!a.AtStart && a.PrevSep.IndexOfAny(['.', '!', '?', ':', '\n']) < 0)
+        {
+            a.Prev = toks[m.First - 2].Text.ToLowerInvariant();
+            // The word before that, inside the same clause: "a huge | question mark".
+            if (m.First >= 5 && toks[m.First - 3].Text.Trim().Length == 0) a.Prev2 = toks[m.First - 4].Text.ToLowerInvariant();
+        }
         if (!a.AtEnd) a.Next = toks[m.Last + 2].Text.ToLowerInvariant();
         return a;
     }
@@ -167,9 +193,11 @@ public static partial class VoiceCommands
             bool ok = m.Cmd switch
             {
                 Cmd.NewLine or Cmd.NewParagraph =>
-                    !Determiners.Contains(c.Prev) && !Prepositions.Contains(c.Prev) && !NounFollowers.Contains(c.Next) && !c.NextIsNumber,
+                    !Determiners.Contains(c.Prev) && !Prepositions.Contains(c.Prev) && !LineObjectVerbs.Contains(c.Prev) &&
+                    !NounFollowers.Contains(c.Next) && !LineNounFollowers.Contains(c.Next) && !c.NextIsNumber,
                 Cmd.Comma or Cmd.Period or Cmd.Question or Cmd.Exclaim =>
                     !c.AtStart && !MarkDeterminers.Contains(c.Prev) && !MarkObjectVerbs.Contains(c.Prev) && !MarkFollowers.Contains(c.Next) &&
+                    !(MarkAdjectives.Contains(c.Prev) && MarkArticles.Contains(c.Prev2)) &&
                     !(m.Cmd == Cmd.Comma && c.PrevIsNumber && c.NextIsNumber),
                 Cmd.Bullet => BulletWordsOk(c) && (inList || c.PrevBoundary || bulletCandidates >= 2),
                 Cmd.BulletList or Cmd.NumberedList =>
@@ -464,6 +492,26 @@ public static partial class VoiceCommands
         ("The comma is in the wrong place.", null),
         ("Pi is three comma one four.", null),
         ("It was a turning point for us.", null),
+
+        // an adjective between the article and the mark, "new line" as part of a noun
+        ("That remains a huge question mark.", null),
+        ("The big question mark is the budget.", null),
+        ("Det store spørgsmålstegn er økonomien.", null),
+        ("Der hænger et stort spørgsmålstegn.", null),
+        ("Det er et godt punktum.", null),
+        ("Han satte et tydeligt punktum.", null),
+        ("We came to a complete full stop.", null),
+        ("I always forget the Oxford comma.", null),
+        ("The values are comma separated.", null),
+        ("We need new line items in the budget.", null),
+        ("Add new line support to the parser.", null),
+        ("Der mangler linjeskift her.", null),
+        ("The new line character is missing.", null),
+        // ... and the commands still work next to such words
+        ("Det var godt punktum vi ses", "Det var godt. Vi ses"),
+        ("Kan du sende en fil spørgsmålstegn", "Kan du sende en fil?"),
+        ("Do you have any idea question mark", "Do you have any idea?"),
+        ("Vi har brug for mere tid ny linje mvh Lukas", "Vi har brug for mere tid\nMvh Lukas"),
     ];
 
     public static void RunTests(string outPath)
@@ -514,6 +562,26 @@ public static partial class VoiceCommands
         if (conflictsOk) pass++;
         total++;
         lines.Add($"{(conflictsOk ? "ok  " : "FAIL")} CONFLICTS defaults: none; translate on the command keys and ask on Ctrl+Win+D: {string.Join(" | ", conflicts)}");
+
+        // Translate without an AI model through the cloud: only Whisper models translate.
+        AppSettings Cloud(string url, string model) => new() { Engine = SttEngine.Cloud, CloudSttBaseUrl = url, CloudSttModel = model, CloudSttKeyProtected = "set", TranslateTarget = "en" };
+        foreach (var (url, model, expected) in new (string, string, string?)[]
+                 {
+                     ("https://api.openai.com/v1", "gpt-4o-transcribe", "whisper-1"),
+                     ("https://api.openai.com/v1", "whisper-1", "whisper-1"),
+                     ("https://api.groq.com/openai/v1", "whisper-large-v3-turbo", "whisper-large-v3"),
+                     ("https://api.groq.com/openai/v1", "whisper-large-v3", "whisper-large-v3"),
+                     ("https://speech.example.com/v1", "some-transcribe", null),
+                     ("https://speech.example.com/v1", "whisper-large-v3", "whisper-large-v3"),
+                 })
+        {
+            var s = Cloud(url, model);
+            string? got = Modes.CloudTranslateModel(s);
+            bool ok = got == expected && (Modes.RouteFor(s, false) == Modes.TranslateRoute.WhisperCloud) == (expected != null);
+            if (ok) pass++;
+            total++;
+            lines.Add($"{(ok ? "ok  " : "FAIL")} TRANSLATE {url} {model} => {got ?? "not offered"} ({Modes.RouteFor(s, false)})");
+        }
 
         // Speed: the rules run on every dictation, so they must stay far below a millisecond.
         var watch = System.Diagnostics.Stopwatch.StartNew();

@@ -76,7 +76,8 @@ public static class Updater
     {
         if (!IsInstalled || _settings == null || State is Phase.Ready or Phase.Checking or Phase.Downloading) return;
         _manager = null; // the source or token may be different now
-        if (!_settings.AutoUpdate) Set(Phase.Off, $"Version {CurrentVersion}. Automatic updates are off.");
+        if (SourceProblem(_settings.UpdateSource) is { } problem) Set(Phase.Failed, problem);
+        else if (!_settings.AutoUpdate) Set(Phase.Off, $"Version {CurrentVersion}. Automatic updates are off.");
         else if (State == Phase.Off) _ = CheckAsync();
     }
 
@@ -140,6 +141,7 @@ public static class Updater
     private static UpdateManager CreateManager(AppSettings settings)
     {
         string source = string.IsNullOrWhiteSpace(settings.UpdateSource) ? DefaultSource : settings.UpdateSource.Trim();
+        if (SourceProblem(source) is { } problem) throw new InvalidOperationException(problem);
         if (IsGitHub(source))
         {
             string token = Secret.Unprotect(settings.UpdateTokenProtected);
@@ -148,11 +150,32 @@ public static class Updater
         return new UpdateManager(source);
     }
 
+    /// <summary>
+    /// Why an update source cannot be used, or null when it can. Only https:// and a local or network folder: the
+    /// packages are checked only against the list from the same source, so over plain http anyone on the network path
+    /// could hand Murmur a program of their own to run.
+    /// </summary>
+    public static string? SourceProblem(string source)
+    {
+        source = source.Trim();
+        if (source.Length == 0) return null; // the default
+        if (source.StartsWith(@"\\", StringComparison.Ordinal)) return null; // a network share
+        if (Uri.TryCreate(source, UriKind.Absolute, out var uri))
+        {
+            if (uri.Scheme == Uri.UriSchemeHttps || uri.IsFile) return null;
+            return uri.Scheme == Uri.UriSchemeHttp
+                ? "The update source must use https://, not http://."
+                : "The update source must be an https:// address or a folder.";
+        }
+        return Path.IsPathFullyQualified(source) ? null : "The update source must be an https:// address or a full folder path.";
+    }
+
     public static bool IsGitHub(string source) =>
         Uri.TryCreate(source.Trim(), UriKind.Absolute, out var uri) && uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase);
 
     private static string FriendlyError(Exception ex, AppSettings settings)
     {
+        if (SourceProblem(settings.UpdateSource) is { } problem) return problem;
         string text = ex.ToString();
         bool notFound = text.Contains("404") || text.Contains("Not Found") || text.Contains("401") || text.Contains("403");
         if (notFound && IsGitHub(settings.UpdateSource) && string.IsNullOrEmpty(settings.UpdateTokenProtected))

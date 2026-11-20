@@ -90,6 +90,7 @@ public partial class OnboardingWindow : Window
         TipHandsFreeKeys.Content = twice;
         TipCommandKeys.Content = Ui.Keys(S.CommandHotkey);
         TipCancelKeys.Content = Ui.Key("Esc");
+        ScreenContextBox.IsChecked = S.UseScreenContext;
 
         _meterTimer.Tick += (_, _) => TickMeter();
         _recorder.Level += level => _latestLevel = Math.Max(_latestLevel, level);
@@ -487,5 +488,12 @@ public partial class OnboardingWindow : Window
         var samples = new float[(bytes.Length - data) / 2];
         for (int i = 0; i < samples.Length; i++) samples[i] = BitConverter.ToInt16(bytes, data + i * 2) / 32768f;
         return samples;
+    }
+
+    /// <summary>Learning and context: the screen-text switch on the last step, the same setting as in Settings.</summary>
+    private void ScreenContext_Click(object sender, RoutedEventArgs e)
+    {
+        S.UseScreenContext = ScreenContextBox.IsChecked == true;
+        S.Save();
     }
 }

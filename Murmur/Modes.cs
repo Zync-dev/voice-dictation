@@ -43,7 +43,22 @@ public static partial class Modes
         if (s.TranslateTarget != "en") return TranslateRoute.Unavailable;
         // The turbo models were trained without translation and write the original language back (measured with --modestest).
         if (s.Engine == SttEngine.Local) return LocalModelTranslates(s) ? TranslateRoute.WhisperLocal : TranslateRoute.Unavailable;
-        return string.IsNullOrEmpty(s.CloudSttKeyProtected) ? TranslateRoute.Unavailable : TranslateRoute.WhisperCloud;
+        // The translations endpoint takes only Whisper models (OpenAI: whisper-1), not gpt-4o-transcribe and the like.
+        return string.IsNullOrEmpty(s.CloudSttKeyProtected) || CloudTranslateModel(s) == null ? TranslateRoute.Unavailable : TranslateRoute.WhisperCloud;
+    }
+
+    /// <summary>
+    /// The model to ask the cloud translations endpoint for, or null when the service has none that translates.
+    /// Groq only translates with whisper-large-v3, not the turbo model; OpenAI only with whisper-1, so a gpt-4o
+    /// transcription model is swapped for it there. Another service with a model that is not Whisper is not offered.
+    /// </summary>
+    internal static string? CloudTranslateModel(AppSettings s)
+    {
+        string model = s.CloudSttModel.Trim();
+        if (s.CloudSttBaseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase))
+            return model.Contains("whisper", StringComparison.OrdinalIgnoreCase) && !model.Contains("turbo", StringComparison.OrdinalIgnoreCase) ? model : "whisper-large-v3";
+        if (s.CloudSttBaseUrl.Contains("api.openai.com", StringComparison.OrdinalIgnoreCase)) return "whisper-1";
+        return model.Contains("whisper", StringComparison.OrdinalIgnoreCase) ? model : null;
     }
 
     public static bool LocalModelTranslates(AppSettings s) => !LocalModel.Get(s.LocalModel).Id.Contains("turbo");
@@ -54,6 +69,8 @@ public static partial class Modes
         HotkeyKind.Translate when RouteFor(s, llmConfigured) == TranslateRoute.Unavailable =>
             s.TranslateTarget == "en" && s.Engine == SttEngine.Local && !LocalModelTranslates(s)
                 ? "Translating needs an AI model. The Turbo speech model cannot translate."
+                : s.TranslateTarget == "en" && s.Engine == SttEngine.Cloud && !string.IsNullOrEmpty(s.CloudSttKeyProtected)
+                ? "Translating needs an AI model. This cloud speech model cannot translate."
                 : $"Translating into {LanguageName(s.TranslateTarget)} needs an AI model. Add one in Settings.",
         HotkeyKind.Ask when !llmConfigured => "Ask needs an AI model. Add one in Settings.",
         _ => null
@@ -108,14 +125,13 @@ public static partial class Modes
 
     /// <summary>
     /// Speech straight to English text through the configured service's /audio/translations endpoint (OpenAI and Groq
-    /// offer it). Groq only translates with whisper-large-v3, not the turbo model, so that one is asked for there.
+    /// offer it), with the model <see cref="CloudTranslateModel"/> picks.
     /// </summary>
     public static async Task<string> CloudTranslateAsync(AppSettings s, float[] samples, CancellationToken ct = default)
     {
         var key = Secret.Unprotect(s.CloudSttKeyProtected);
         if (string.IsNullOrEmpty(key)) throw new InvalidOperationException("Cloud transcription needs an API key (Settings).");
-        string model = s.CloudSttBaseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase) && s.CloudSttModel.Contains("turbo")
-            ? "whisper-large-v3" : s.CloudSttModel;
+        string model = CloudTranslateModel(s) ?? throw new InvalidOperationException("This cloud speech model cannot translate. Add an AI model in Settings.");
         using var form = new MultipartFormDataContent();
         var file = new ByteArrayContent(AudioRecorder.ToWav(samples));
         file.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");

@@ -123,8 +123,20 @@ public class AppSettings
     public bool UseScreenContext { get; set; } = true;
     /// <summary>Give the speech model the names and English tech words you use most (from history and the dictionary), so mixed Danish/English keeps them.</summary>
     public bool PersonalVocabulary { get; set; } = true;
-    /// <summary>Process names, separated by commas, where Murmur does nothing (for example "keepass, 1password").</summary>
-    public string ExcludedApps { get; set; } = "";
+    /// <summary>
+    /// Process names, separated by commas, where Murmur does nothing (for example "keepass, 1password"). Starts with
+    /// the common password managers: their notes, user name and recovery-code fields are ordinary text fields, so the
+    /// password guard alone would let Murmur read them as screen context and paste into them.
+    /// </summary>
+    public string ExcludedApps { get; set; } = DefaultExcludedApps;
+
+    public const string DefaultExcludedApps = "KeePass, KeePassXC, 1Password, Bitwarden, Enpass, Dashlane, RoboForm, NordPass, KeeperPasswordManager";
+
+    /// <summary>
+    /// False in a settings file from before the password managers were excluded by default: they are added once on
+    /// load. A user who takes them out later keeps them out.
+    /// </summary>
+    public bool PasswordManagersExcluded { get; set; }
 
     // ---- Modes and voice commands ----
 
@@ -200,11 +212,21 @@ public class AppSettings
         try
         {
             if (File.Exists(FilePath))
-                return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), Json) ?? new();
+            {
+                var loaded = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), Json) ?? new() { PasswordManagersExcluded = true };
+                if (!loaded.PasswordManagersExcluded)
+                {
+                    var names = ContextAssist.ExcludedNames(loaded.ExcludedApps);
+                    names.AddRange(ContextAssist.ExcludedNames(DefaultExcludedApps).Where(d => !names.Contains(d, StringComparer.OrdinalIgnoreCase)));
+                    loaded.ExcludedApps = string.Join(", ", names);
+                    loaded.PasswordManagersExcluded = true;
+                }
+                return loaded;
+            }
         }
         catch (Exception ex) { Log.Write("Settings load failed: " + ex.Message); }
 
-        var fresh = new AppSettings();
+        var fresh = new AppSettings { PasswordManagersExcluded = true };
         // Guessing among a hundred languages is unreliable on short sentences, so start from the Windows language.
         string system = System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
         if (system == "nb" || system == "nn") system = "no";

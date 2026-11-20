@@ -30,12 +30,13 @@ public sealed partial class TextProcessor
     {
         var kind = DevMode.Classify(_settings, context);
         if (kind == DevAppKind.None) return null;
-        bool code = DevMode.HasSpokenCode(raw);
+        // In an editor everyday words ("punktum", "star", "greater than") do not make a sentence code; in a terminal they do.
+        bool code = kind == DevAppKind.Editor ? DevMode.IsSpokenCode(raw) : DevMode.HasSpokenCode(raw);
         if (kind == DevAppKind.Editor && !code) return null;
 
         string text = DevMode.LowerFirstWord(BasicCleanup(raw, Styles.Neutral, language));
         if (kind == DevAppKind.Terminal) text = DevMode.FixTerminalWords(text);
-        if (code) text = DevMode.Format(text);
+        if (code) text = DevMode.Format(text, symbolsWithoutTrigger: true);
         text = DevMode.DropTrailingPeriod(text);
         text = ApplyDictionary(text);
         text = ApplySnippets(text);

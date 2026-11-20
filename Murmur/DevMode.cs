@@ -54,8 +54,18 @@ public static partial class DevMode
         Quote,      // "…" toggles open/close
     }
 
-    /// <param name="Trigger">False for words that are also everyday words (plus, minus, comma): they become symbols only when something else made the dictation code.</param>
-    private sealed record Symbol(string Pattern, string Text, Fit Fit, bool Trigger = true);
+    /// <summary>
+    /// How much a symbol word says "this dictation is code" in an editor, where prose (comments, commit messages,
+    /// Markdown, chat panels) is dictated too. In a terminal any Strong or Weak word counts.
+    /// </summary>
+    private enum Cue
+    {
+        Strong, // only ever code: "open paren", "double equals", "underscore"
+        Weak,   // also an everyday word ("dot", "star", "greater than", "lig med", "stjerne"): code only among others or in a very short dictation
+        None,   // an everyday word or a voice command ("plus", "comma", "punktum"): converted only when something else made the dictation code
+    }
+
+    private sealed record Symbol(string Pattern, string Text, Fit Fit, Cue Cue = Cue.Strong);
 
     // Longer phrases first, so "double equals" wins over "equals". English, then Danish.
     private static readonly Symbol[] Symbols =
@@ -65,12 +75,12 @@ public static partial class DevMode
         new(@"greater than or equals?(?: to)?", ">=", Fit.Binary),
         new(@"triple equals?", "===", Fit.Binary),
         new(@"(?:double equals?|equals equals)", "==", Fit.Binary),
-        new(@"(?:not equals?|not equal to|bang equals?)", "!=", Fit.Binary),
+        new(@"(?:not equals?|not equal to|bang equals?)", "!=", Fit.Binary, Cue.Weak),
         new(@"plus equals?", "+=", Fit.Binary),
         new(@"minus equals?", "-=", Fit.Binary),
-        new(@"(?:equals|equal sign|equals sign)", "=", Fit.Binary),
+        new(@"(?:equals|equal sign|equals sign)", "=", Fit.Binary, Cue.Weak),
         new(@"fat arrow", "=>", Fit.Binary),
-        new(@"arrow", "->", Fit.Binary),
+        new(@"arrow", "->", Fit.Binary, Cue.Weak),
         new(@"(?:open|left) paren(?:thesis|theses|s)?", "(", Fit.Open),
         new(@"(?:close|closed|right) paren(?:thesis|theses|s)?", ")", Fit.Close),
         new(@"(?:open|left) (?:square )?brackets?", "[", Fit.Open),
@@ -79,72 +89,74 @@ public static partial class DevMode
         new(@"(?:close|closed|right) (?:curly )?braces?|close curly", "}", Fit.Close),
         new(@"(?:open|left) angle(?: brackets?)?", "<", Fit.Open),
         new(@"(?:close|closed|right) angle(?: brackets?)?", ">", Fit.Close),
-        new(@"less than", "<", Fit.Binary),
-        new(@"greater than", ">", Fit.Binary),
+        new(@"less than", "<", Fit.Binary, Cue.Weak),
+        new(@"greater than", ">", Fit.Binary, Cue.Weak),
         new(@"(?:double ampersand|and and)", "&&", Fit.Binary),
         new(@"(?:double pipe|or or)", "||", Fit.Binary),
-        new(@"pipe", "|", Fit.Binary),
+        new(@"pipe", "|", Fit.Binary, Cue.Weak),
         new(@"ampersand", "&", Fit.Binary),
         new(@"dot dot", "..", Fit.Prefix),
         new(@"dot slash", "./", Fit.Prefix),
-        new(@"dot", ".", Fit.Glue),
+        new(@"dot", ".", Fit.Glue, Cue.Weak),
         new(@"back ?slash", "\\", Fit.Glue),
-        new(@"(?:forward )?slash", "/", Fit.Glue),
+        new(@"(?:forward )?slash", "/", Fit.Glue, Cue.Weak),
         new(@"double colon", "::", Fit.Glue),
-        new(@"semi ?colon", ";", Fit.Suffix),
-        new(@"colon", ":", Fit.Suffix),
+        new(@"semi ?colon", ";", Fit.Suffix, Cue.Weak),
+        new(@"colon", ":", Fit.Suffix, Cue.Weak),
         new(@"underscore", "_", Fit.Glue),
         new(@"(?:dash dash|double dash)", "--", Fit.Prefix),
-        new(@"(?:dash|hyphen)", "-", Fit.Prefix),
+        new(@"(?:dash|hyphen)", "-", Fit.Prefix, Cue.Weak),
         new(@"plus plus", "++", Fit.Suffix),
-        new(@"(?:hash|hashtag|pound sign)", "#", Fit.Prefix),
+        new(@"(?:hash|hashtag|pound sign)", "#", Fit.Prefix, Cue.Weak),
         new(@"at sign", "@", Fit.Prefix),
-        new(@"dollar sign", "$", Fit.Prefix),
-        new(@"tilde", "~", Fit.Prefix),
-        new(@"bang", "!", Fit.Prefix),
-        new(@"(?:asterisk|star)", "*", Fit.Prefix),
+        new(@"dollar sign", "$", Fit.Prefix, Cue.Weak),
+        new(@"tilde", "~", Fit.Prefix, Cue.Weak),
+        new(@"bang", "!", Fit.Prefix, Cue.Weak),
+        new(@"(?:asterisk|star)", "*", Fit.Prefix, Cue.Weak),
         new(@"back ?tick", "`", Fit.Quote),
-        new(@"single quote", "'", Fit.Quote),
-        new(@"(?:double )?quote", "\"", Fit.Quote),
-        new(@"plus", "+", Fit.Binary, Trigger: false),
-        new(@"minus", "-", Fit.Binary, Trigger: false),
-        new(@"comma", ",", Fit.Suffix, Trigger: false),
+        new(@"single quote", "'", Fit.Quote, Cue.Weak),
+        new(@"(?:double )?quote", "\"", Fit.Quote, Cue.Weak), // also the voice command "quote ... unquote"
+        new(@"plus", "+", Fit.Binary, Cue.None),
+        new(@"minus", "-", Fit.Binary, Cue.None),
+        new(@"comma", ",", Fit.Suffix, Cue.None), // a voice command
 
         // Danish
         new(@"større end eller lig med", ">=", Fit.Binary),
         new(@"mindre end eller lig med", "<=", Fit.Binary),
         new(@"tredobbelt lig med", "===", Fit.Binary),
         new(@"dobbelt lig med", "==", Fit.Binary),
-        new(@"(?:ikke lig med|forskellig fra)", "!=", Fit.Binary),
-        new(@"lig med", "=", Fit.Binary),
-        new(@"lige med", "=", Fit.Binary, Trigger: false), // how the speech model often writes "lig med"; also everyday Danish
+        new(@"ikke lig med", "!=", Fit.Binary, Cue.Weak),
+        new(@"forskellig fra", "!=", Fit.Binary, Cue.None), // everyday Danish ("different from")
+        new(@"lig med", "=", Fit.Binary, Cue.Weak),
+        new(@"lige med", "=", Fit.Binary, Cue.None), // how the speech model often writes "lig med"; also everyday Danish
         new(@"(?:fed|tyk) pil", "=>", Fit.Binary),
-        new(@"pil", "->", Fit.Binary),
+        new(@"pil", "->", Fit.Binary, Cue.Weak),
         new(@"(?:start|åben|åbn|venstre) parentes|parentes start", "(", Fit.Open),
         new(@"(?:slut|luk|højre) parentes|parentes slut", ")", Fit.Close),
         new(@"(?:start|åben|åbn|venstre) (?:firkantet parentes|klamme)", "[", Fit.Open),
         new(@"(?:slut|luk|højre) (?:firkantet parentes|klamme)", "]", Fit.Close),
         new(@"(?:start|åben|åbn|venstre) tuborg(?:klamme|parentes)?", "{", Fit.OpenLoose),
         new(@"(?:slut|luk|højre) tuborg(?:klamme|parentes)?", "}", Fit.Close),
-        new(@"større end", ">", Fit.Binary),
-        new(@"mindre end", "<", Fit.Binary),
+        new(@"større end", ">", Fit.Binary, Cue.Weak),
+        new(@"mindre end", "<", Fit.Binary, Cue.Weak),
         new(@"prik prik", "..", Fit.Prefix),
-        new(@"(?:prik|punktum)", ".", Fit.Glue),
+        new(@"prik", ".", Fit.Glue, Cue.Weak),
+        new(@"punktum", ".", Fit.Glue, Cue.None), // the voice command for a full stop
         new(@"omvendt skråstreg", "\\", Fit.Glue),
-        new(@"skråstreg", "/", Fit.Glue),
+        new(@"skråstreg", "/", Fit.Glue, Cue.Weak),
         new(@"dobbelt kolon", "::", Fit.Glue),
-        new(@"semikolon", ";", Fit.Suffix),
-        new(@"kolon", ":", Fit.Suffix),
-        new(@"understreg(?:ning)?", "_", Fit.Glue),
+        new(@"semikolon", ";", Fit.Suffix, Cue.Weak),
+        new(@"kolon", ":", Fit.Suffix, Cue.Weak),
+        new(@"understreg(?:ning)?", "_", Fit.Glue, Cue.Weak), // also "underline" ("understreg det")
         new(@"dobbelt (?:binde ?streg|bene ?strege?)", "--", Fit.Prefix),
-        new(@"binde ?strege?|bene ?strege?", "-", Fit.Prefix),
+        new(@"binde ?strege?|bene ?strege?", "-", Fit.Prefix, Cue.Weak),
         new(@"lodret streg", "|", Fit.Binary),
         new(@"snabel[ -]?a", "@", Fit.Prefix),
-        new(@"(?:havelåge|firkant)", "#", Fit.Prefix),
-        new(@"dollartegn", "$", Fit.Prefix),
-        new(@"stjerne", "*", Fit.Prefix),
-        new(@"enkelt anførselstegn|apostrof", "'", Fit.Quote),
-        new(@"an ?førsels ?tegn|anførelsestegn|citations ?tegn|citat ?tegn|gåseøjne", "\"", Fit.Quote),
+        new(@"(?:havelåge|firkant)", "#", Fit.Prefix, Cue.Weak),
+        new(@"dollartegn", "$", Fit.Prefix, Cue.Weak),
+        new(@"stjerne", "*", Fit.Prefix, Cue.Weak),
+        new(@"enkelt anførselstegn|apostrof", "'", Fit.Quote, Cue.Weak),
+        new(@"an ?førsels ?tegn|anførelsestegn|citations ?tegn|citat ?tegn|gåseøjne", "\"", Fit.Quote, Cue.Weak),
     ];
 
     // In a terminal the speech model often hears "git push" as "get push".
@@ -161,7 +173,7 @@ public static partial class DevMode
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static readonly Regex TriggerRegex = new(
-        @"(?<![\p{L}\p{N}])(?:" + string.Join("|", Symbols.Where(s => s.Trigger).Select(s => s.Pattern)) + "|" + CasePattern + @")(?![\p{L}\p{N}])",
+        @"(?<![\p{L}\p{N}])(?:" + string.Join("|", Symbols.Where(s => s.Cue != Cue.None).Select(s => s.Pattern)) + "|" + CasePattern + @")(?![\p{L}\p{N}])",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     // ---------- spoken identifier casing ----------
@@ -177,8 +189,38 @@ public static partial class DevMode
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex CaseRegex();
 
-    /// <summary>True when the words contain something developer mode turns into code.</summary>
+    /// <summary>True when the words contain any symbol word or casing command (the rule for terminals, where nothing is prose).</summary>
     public static bool HasSpokenCode(string text) => TriggerRegex.IsMatch(text);
+
+    [GeneratedRegex(@"[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*")]
+    private static partial Regex WordRegex();
+
+    /// <summary>
+    /// The rule for code editors, where comments, commit messages, Markdown and chat panels are prose: a casing command
+    /// or a word that is only ever code ("open paren") makes a dictation code. Everyday symbol words ("dot", "star",
+    /// "greater than", "stjerne") count only when they make up much of it: two or more with at most four words each
+    /// ("src slash app dot tsx"), or one in a dictation of at most four words with words on both sides ("self arrow
+    /// next", "bruger prik e-mail"). Voice-command words ("punktum", "comma") never count.
+    /// </summary>
+    public static bool IsSpokenCode(string text)
+    {
+        if (CaseRegex().IsMatch(text)) return true;
+        int weak = 0;
+        bool atEdge = false;
+        foreach (Match m in SymbolRegex.Matches(text))
+        {
+            var cue = Cue.None;
+            for (int i = 0; i < Symbols.Length; i++)
+                if (m.Groups["s" + i].Success) { cue = Symbols[i].Cue; break; }
+            if (cue == Cue.Strong) return true;
+            if (cue != Cue.Weak) continue;
+            weak++;
+            atEdge |= !WordRegex().IsMatch(text[..m.Index]) || !WordRegex().IsMatch(text[(m.Index + m.Length)..]);
+        }
+        if (weak == 0) return false;
+        int words = WordRegex().Count(text);
+        return weak >= 2 ? words <= 4 * weak : words <= 4 && !atEdge;
+    }
 
     internal static string FormatIdentifier(string command, IEnumerable<string> words)
     {
@@ -381,6 +423,17 @@ public static partial class DevMode
         ("WindowsTerminal", "PowerShell", "Docker compose up.", "en", "docker compose up"),
         ("WindowsTerminal", "PowerShell", "Git commit bindestreg m anførselstegn ret fejl anførselstegn.", "da", "git commit -m \"ret fejl\""),
         ("WindowsTerminal", "PowerShell", "Dotnet bygge.", "da", "dotnet bygge"),
+        // Prose in an editor (comments, commit messages, Markdown, chat): sentence casing, voice commands, no symbols.
+        ("Code", "a.ts - p - Visual Studio Code", "Det er færdigt punktum vi ses i morgen", "da", "Det er færdigt. Vi ses i morgen"),
+        ("Code", "a.ts - p - Visual Studio Code", "Hej Peter ny linje vi ses klokken fem punktum", "da", "Hej Peter\nVi ses klokken fem."),
+        ("Code", "a.ts - p - Visual Studio Code", "Mødet er om mindre end en time.", "da", "Mødet er om mindre end en time."),
+        ("Code", "a.ts - p - Visual Studio Code", "The new build is greater than the old one.", "en", "The new build is greater than the old one."),
+        ("Code", "a.ts - p - Visual Studio Code", "Give the repo a star if you like it.", "en", "Give the repo a star if you like it."),
+        ("Code", "a.ts - p - Visual Studio Code", "Husk at sende et tilbud med en stjerne.", "da", "Husk at sende et tilbud med en stjerne."),
+        ("Code", "a.ts - p - Visual Studio Code", "Fix the dot in the file name.", "en", "Fix the dot in the file name."),
+        ("Code", "a.ts - p - Visual Studio Code", "Det er forskellig fra i går.", "da", "Det er forskellig fra i går."),
+        ("Code", "a.ts - p - Visual Studio Code", "user dot name", "en", "user.name"),
+        ("Code", "a.ts - p - Visual Studio Code", "x equals five", "en", "x = five"),
         ("cmd", "Command Prompt", "Dir.", "en", "dir"),
         ("notepad", "Untitled - Notepad", "Camel case user id.", "en", "Camel case user id."),
         ("slack", "Slack", "Open paren is a word here.", "en", "Open paren is a word here."),

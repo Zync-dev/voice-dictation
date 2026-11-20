@@ -50,6 +50,8 @@ public sealed class DictationController
     private readonly ContextAssist _assist;
 
     private Insertion? _last;
+    /// <summary>The window in front when the recording started: the paste goes there unless the user moved on.</summary>
+    private IntPtr _startWindow;
     private CancellationTokenSource? _rewriteCts;
 
     public bool IsRecording => _state is State.Holding or State.TapPending or State.HandsFree;
@@ -213,6 +215,7 @@ public sealed class DictationController
             _answer = null;
             _recorder.Activity.Whisper = _settings.WhisperMode;
             _recorder.Start(_settings.Microphone);
+            _startWindow = Native.GetForegroundWindow();
             _maxTimer.Start();
             _overlay.ShowRecording(_mode, false);
             if (_settings.Sounds) Sounds.Start();
@@ -275,8 +278,10 @@ public sealed class DictationController
             var screen = await _assist.TakeScreenAsync();
             _processor.Screen = screen;
             var passwordCheck = _assist.IsPasswordTargetAsync(screen);
-            // Ctrl+C in a terminal is "interrupt the running program", so never probe for a selection there.
-            string selection = mode is HotkeyKind.Command or HotkeyKind.Ask && !context.IsTerminal ? await TextInjector.CopySelectionAsync() : "";
+            // Ctrl+C in a terminal is "interrupt the running program", so never probe for a selection there. Nor in an
+            // excluded app the user switched to while recording (hands-free): Murmur sends it no keys at all.
+            string selection = mode is HotkeyKind.Command or HotkeyKind.Ask && !context.IsTerminal && !_assist.IsExcluded(out _)
+                ? await TextInjector.CopySelectionAsync() : "";
 
             // ---- AUDIO: noise suppression, silence trimming and gain, off the UI thread ----
             var (prepared, audioReport) = await audio;
@@ -322,15 +327,19 @@ public sealed class DictationController
                 return;
             }
 
-            if (await passwordCheck)
+            // Learning and context: never paste into a password field or an excluded app, and keep it out of History;
+            // Copy is on the card. Checked again now: focus may have moved while the text was being written.
+            var (block, blockedApp) = await passwordCheck ? (ContextAssist.PasteBlock.Password, "") : await _assist.PasteBlockedAsync(_startWindow);
+            if (block != ContextAssist.PasteBlock.None)
             {
-                // Learning and context: never paste into a password field, and keep it out of History; Copy is on the card.
-                _last = new Insertion { Text = text, Typed = text, Window = Native.GetForegroundWindow(), App = context.Process, NotPasted = true };
-                _overlay.ShowResult(text, context.Process, canRewrite: false, status: "");
-                _overlay.NoteOnResult("Not pasted into a password field", OverlayWindow.Note.Info, seconds: 8);
-                Log.Write("Dictation held back: the focused field is a password field");
+                var now = ActiveWindowInfo.Get();
+                _last = new Insertion { Text = text, Typed = text, Window = Native.GetForegroundWindow(), App = now.Process, NotPasted = true };
+                _overlay.ShowResult(text, now.Process, canRewrite: false, status: "");
+                _overlay.NoteOnResult(ContextAssist.HeldNote(block, blockedApp), OverlayWindow.Note.Info, seconds: 8);
+                Log.Write($"Dictation held back: {block} ({now.Process})");
                 return;
             }
+            context = ActiveWindowInfo.Get(); // where the text really goes, for History
 
             string toInsert = _settings.TrailingSpace && mode is HotkeyKind.Dictate or HotkeyKind.Translate && !text.EndsWith('\n') ? text + " " : text;
             // Record first, so the text is recoverable from History even if inserting fails.
@@ -463,7 +472,17 @@ public sealed class DictationController
             _overlay.NoteOnResult($"Click into {Pretty(last.App)} first", OverlayWindow.Note.Info, seconds: 4);
             return false;
         }
-        return await TextInjector.WaitForModifiersReleasedAsync();
+        if (!await TextInjector.WaitForModifiersReleasedAsync()) return false;
+        // The same window may now have a different field in focus, such as a web page's password box.
+        var (block, app) = await _assist.PasteBlockedAsync(last.Window);
+        if (block == ContextAssist.PasteBlock.None) return true;
+        _overlay.NoteOnResult(block switch
+        {
+            ContextAssist.PasteBlock.Password => "Not sent: the focused field is a password field",
+            ContextAssist.PasteBlock.Excluded => $"Not sent: Murmur is off in {app}",
+            _ => "Not sent: the field could not be checked",
+        }, OverlayWindow.Note.Info, seconds: 5);
+        return false;
     }
 
     private async Task RewriteAsync(Insertion last, string how)
@@ -585,17 +604,13 @@ public sealed class DictationController
                     return;
                 }
                 // Learning and context guards apply to an inserted answer too: excluded apps and password fields.
-                if (_assist.IsExcluded(out string offIn))
-                {
-                    _overlay.NoteOnResult($"Murmur is off in {offIn}", OverlayWindow.Note.Info, seconds: 4);
-                    return;
-                }
-                if (await _assist.IsPasswordTargetAsync(null))
-                {
-                    _overlay.NoteOnResult("Not pasted into a password field", OverlayWindow.Note.Info, seconds: 6);
-                    return;
-                }
                 var window = Native.GetForegroundWindow();
+                var (block, offIn) = await _assist.PasteBlockedAsync(window);
+                if (block != ContextAssist.PasteBlock.None)
+                {
+                    _overlay.NoteOnResult(ContextAssist.HeldNote(block, offIn), OverlayWindow.Note.Info, seconds: 6);
+                    return;
+                }
                 try { await TextInjector.PasteAsync(answer.Text, _settings.RestoreClipboard); }
                 catch (Exception ex)
                 {
