@@ -218,6 +218,7 @@ public sealed class DictationController
             if (_settings.Sounds) Sounds.Start();
             _assist.BeginDictation(); // reads the text around the cursor in the background
             StartPreview();
+            ProjectVocabulary.Prefetch(_settings); // developer mode: read the open project while the user talks
             return true;
         }
         catch (Exception ex)
@@ -285,7 +286,7 @@ public sealed class DictationController
             var route = Modes.RouteFor(_settings, _processor.HasAi);
             var transcript = mode == HotkeyKind.Translate && route == Modes.TranslateRoute.WhisperCloud
                 ? new Transcript(await Modes.CloudTranslateAsync(_settings, samples), "en")
-                : await _transcriber.TranscribeAsync(samples, _processor.VocabularyPrompt(seconds), previews: preview?.Session,
+                : await _transcriber.TranscribeAsync(samples, _processor.VocabularyPrompt(context, seconds), previews: preview?.Session,
                     options: mode == HotkeyKind.Translate ? new SpeechOptions(AnyLanguage: true, TranslateToEnglish: route == Modes.TranslateRoute.WhisperLocal) : null);
             // A model that failed at startup may have loaded now; keep the Home tag truthful.
             if (_settings.Engine == SttEngine.Local && Model != ModelState.Ready) SetModel(ModelState.Ready);

@@ -1,0 +1,191 @@
+<UserControl x:Class="Murmur.TranscribePage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Murmur"
+             AllowDrop="True" Background="Transparent"
+             DragEnter="Page_DragOver" DragOver="Page_DragOver" DragLeave="Page_DragLeave" Drop="Page_Drop">
+    <UserControl.Resources>
+        <Style x:Key="PageLead" TargetType="TextBlock" BasedOn="{StaticResource BodyMuted}">
+            <Setter Property="Margin" Value="0,8,0,0"/>
+            <Setter Property="MaxWidth" Value="560"/>
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+        </Style>
+        <Style x:Key="Stamp" TargetType="TextBlock" BasedOn="{StaticResource KeycapText}">
+            <Setter Property="Foreground" Value="{DynamicResource InkMuted}"/>
+            <Setter Property="Typography.NumeralAlignment" Value="Tabular"/>
+            <Setter Property="Margin" Value="0,2,0,0"/>
+            <Setter Property="VerticalAlignment" Value="Top"/>
+        </Style>
+        <Style x:Key="ActionGlyph" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource FontIcons}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Margin" Value="0,1,8,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="SegmentRow" TargetType="ListBoxItem" BasedOn="{StaticResource HistoryRow}">
+            <Setter Property="Padding" Value="0"/>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="32,32,32,24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header: the title, and the language the file is written in. -->
+        <DockPanel Margin="0,0,0,24">
+            <StackPanel DockPanel.Dock="Right" VerticalAlignment="Top" Margin="16,4,0,0" x:Name="LanguagePanel">
+                <TextBlock Style="{StaticResource Caption}" Text="Language" Margin="2,0,0,6"/>
+                <Border Style="{StaticResource SegTrack}">
+                    <StackPanel Orientation="Horizontal">
+                        <RadioButton x:Name="LangAuto" GroupName="FileLanguage" Style="{StaticResource Seg}" Content="Auto" Padding="12,0" Checked="Language_Checked"
+                                     ToolTip="Murmur listens to the start of the file and picks, as it does for dictation."/>
+                        <RadioButton x:Name="LangMain" GroupName="FileLanguage" Style="{StaticResource Seg}" Content="Danish" Padding="12,0" Checked="Language_Checked"/>
+                        <RadioButton x:Name="LangSecond" GroupName="FileLanguage" Style="{StaticResource Seg}" Content="English" Padding="12,0" Checked="Language_Checked"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+            <StackPanel>
+                <TextBlock Style="{StaticResource DisplayLg}" Text="Transcribe"/>
+                <TextBlock Style="{StaticResource PageLead}" Text="Turn a recording into text, with a time stamp for each part."/>
+            </StackPanel>
+        </DockPanel>
+
+        <!-- ===== Empty: a drop zone and one button ===== -->
+        <Grid x:Name="EmptyView" Grid.Row="1">
+            <Rectangle x:Name="DropEdge" RadiusX="16" RadiusY="16" Fill="{DynamicResource Surface}" Stroke="{DynamicResource LineStrong}"
+                       StrokeThickness="1" StrokeDashArray="4 4" SnapsToDevicePixels="True"/>
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24" MaxWidth="460">
+                <!-- A recording becoming lines of text, ending at the caret. -->
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Height="28" Margin="0,0,0,20" IsHitTestVisible="False">
+                    <Rectangle Width="4" Height="10" RadiusX="2" RadiusY="2" Fill="{DynamicResource LineStrong}" VerticalAlignment="Center"/>
+                    <Rectangle Width="4" Height="22" RadiusX="2" RadiusY="2" Fill="{DynamicResource LineStrong}" VerticalAlignment="Center" Margin="3,0,0,0"/>
+                    <Rectangle Width="4" Height="14" RadiusX="2" RadiusY="2" Fill="{DynamicResource LineStrong}" VerticalAlignment="Center" Margin="3,0,0,0"/>
+                    <Rectangle Width="4" Height="26" RadiusX="2" RadiusY="2" Fill="{DynamicResource LineStrong}" VerticalAlignment="Center" Margin="3,0,0,0"/>
+                    <Rectangle Width="4" Height="8" RadiusX="2" RadiusY="2" Fill="{DynamicResource LineStrong}" VerticalAlignment="Center" Margin="3,0,0,0"/>
+                    <StackPanel VerticalAlignment="Center" Margin="14,0,0,0">
+                        <Rectangle Width="56" Height="5" RadiusX="2.5" RadiusY="2.5" Fill="{DynamicResource Line}" HorizontalAlignment="Left"/>
+                        <Rectangle Width="40" Height="5" RadiusX="2.5" RadiusY="2.5" Fill="{DynamicResource Line}" HorizontalAlignment="Left" Margin="0,5,0,0"/>
+                        <Rectangle Width="48" Height="5" RadiusX="2.5" RadiusY="2.5" Fill="{DynamicResource Line}" HorizontalAlignment="Left" Margin="0,5,0,0"/>
+                    </StackPanel>
+                    <Rectangle Width="4" Height="28" RadiusX="2" RadiusY="2" Fill="{DynamicResource Voice}" VerticalAlignment="Center" Margin="5,0,0,0"/>
+                </StackPanel>
+                <TextBlock x:Name="DropHeading" Style="{StaticResource Heading}" Text="Drop a recording here" HorizontalAlignment="Center" Margin="0,0,0,6"/>
+                <TextBlock Style="{StaticResource BodyMuted}" TextAlignment="Center"
+                           Text="Audio or video of any length: wav, mp3, m4a, mp4, mov or webm."/>
+                <Button Style="{StaticResource BtnPrimary}" HorizontalAlignment="Center" Margin="0,20,0,0" Click="Choose_Click"
+                        AutomationProperties.Name="Choose a file">
+                    <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource ActionGlyph}" Text="&#xE8E5;"/><TextBlock Text="Choose a file" VerticalAlignment="Center"/></StackPanel>
+                </Button>
+                <TextBlock x:Name="EngineText" Style="{StaticResource Caption}" TextAlignment="Center" Margin="0,16,0,0"/>
+                <TextBlock x:Name="EmptyError" Style="{StaticResource Body}" Foreground="{DynamicResource Danger}" TextAlignment="Center"
+                           Margin="0,16,0,0" Visibility="Collapsed"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- ===== Working and done: the file, its progress or actions, then the text ===== -->
+        <Grid x:Name="ResultView" Grid.Row="1" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*" MinHeight="120"/>
+            </Grid.RowDefinitions>
+
+            <Border Style="{StaticResource Card}" Padding="20,16,16,16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock x:Name="FileName" Style="{StaticResource Label}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock x:Name="FileMeta" Style="{StaticResource Caption}" Margin="0,2,0,0" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                    <ContentControl x:Name="StateTag" Grid.Column="1" Style="{StaticResource TagThink}" Content="Writing" Margin="12,0,0,0"/>
+
+                    <!-- Working: a progress bar in think, and a way out. -->
+                    <Grid x:Name="WorkingPanel" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <Border x:Name="ProgressTrack" Height="6" CornerRadius="3" Background="{DynamicResource SurfaceSunken}" SizeChanged="ProgressTrack_SizeChanged">
+                                <Border x:Name="ProgressFill" HorizontalAlignment="Left" Width="0" CornerRadius="3" Background="{DynamicResource Think}"/>
+                            </Border>
+                            <TextBlock x:Name="ProgressText" Style="{StaticResource Caption}" Margin="0,8,0,0" Typography.NumeralAlignment="Tabular"/>
+                        </StackPanel>
+                        <Button x:Name="CancelButton" Grid.Column="1" Content="Stop" Margin="16,0,0,0" VerticalAlignment="Center" Click="Cancel_Click"
+                                AutomationProperties.Name="Stop transcribing"/>
+                    </Grid>
+
+                    <!-- Done: what to do with the text. -->
+                    <WrapPanel x:Name="DonePanel" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,16,0,-8" Visibility="Collapsed">
+                        <Button Style="{StaticResource BtnPrimary}" Margin="0,0,8,8" Click="Copy_Click" AutomationProperties.Name="Copy text">
+                            <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource ActionGlyph}" Text="&#xE8C8;"/><TextBlock x:Name="CopyLabel" Text="Copy text" VerticalAlignment="Center"/></StackPanel>
+                        </Button>
+                        <Button Margin="0,0,8,8" Click="SaveTxt_Click" AutomationProperties.Name="Save as text file">
+                            <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource ActionGlyph}" Text="&#xE74E;"/><TextBlock Text="Save as .txt" VerticalAlignment="Center"/></StackPanel>
+                        </Button>
+                        <Button Margin="0,0,8,8" Click="SaveSrt_Click" AutomationProperties.Name="Save as subtitles">
+                            <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource ActionGlyph}" Text="&#xE7F0;"/><TextBlock Text="Save as .srt" VerticalAlignment="Center"/></StackPanel>
+                        </Button>
+                        <Button x:Name="SummarizeButton" Margin="0,0,8,8" Click="Summarize_Click" AutomationProperties.Name="Summarize">
+                            <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource ActionGlyph}" Text="&#xE8FD;"/><TextBlock Text="Summarize" VerticalAlignment="Center"/></StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource BtnGhost}" Height="36" FontSize="14" Margin="0,0,0,8" Click="NewFile_Click" AutomationProperties.Name="Transcribe another file">
+                            <TextBlock Text="Another file" VerticalAlignment="Center"/>
+                        </Button>
+                    </WrapPanel>
+                </Grid>
+            </Border>
+
+            <!-- Summary, when asked for. -->
+            <Border x:Name="SummaryCard" Grid.Row="1" Style="{StaticResource Card}" Padding="20,16" Visibility="Collapsed">
+                <StackPanel>
+                    <DockPanel>
+                        <Button x:Name="CopySummaryButton" DockPanel.Dock="Right" Style="{StaticResource BtnGhost}" Click="CopySummary_Click" Margin="8,-6,-8,0"
+                                VerticalAlignment="Top" AutomationProperties.Name="Copy summary">
+                            <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource ActionGlyph}" Text="&#xE8C8;"/><TextBlock x:Name="CopySummaryLabel" Text="Copy" VerticalAlignment="Center"/></StackPanel>
+                        </Button>
+                        <TextBlock Style="{StaticResource Overline}" Text="SUMMARY" VerticalAlignment="Center"/>
+                    </DockPanel>
+                    <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto" Focusable="False" Margin="0,10,0,0">
+                        <TextBlock x:Name="SummaryText" Style="{StaticResource Body}"/>
+                    </ScrollViewer>
+                </StackPanel>
+            </Border>
+
+            <!-- The text, one row per part. -->
+            <Border Grid.Row="2" Style="{StaticResource Card}" Padding="8,4,8,8" Margin="0">
+                <Grid>
+                    <ListBox x:Name="SegmentList" Background="Transparent" BorderThickness="0" Padding="0"
+                             ItemContainerStyle="{StaticResource SegmentRow}" Focusable="False"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.ScrollUnit="Pixel"
+                             AutomationProperties.Name="Transcript">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="{x:Type local:FileSegment}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="72"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Style="{StaticResource Stamp}" Text="{Binding Start, Converter={x:Static local:TranscribePage.ClockConverter}}"/>
+                                    <TextBlock Grid.Column="1" Style="{StaticResource Body}" Text="{Binding Text}"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <TextBlock x:Name="SegmentsEmpty" Style="{StaticResource BodyMuted}" TextAlignment="Center" Margin="24"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="380" IsHitTestVisible="False"/>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

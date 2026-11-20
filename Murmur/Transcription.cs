@@ -49,7 +49,7 @@ public static class Http
 }
 
 /// <summary>Speech-to-text: on-device Whisper (whisper.cpp) or any OpenAI-compatible /audio/transcriptions API.</summary>
-public sealed class Transcriber : IDisposable
+public sealed partial class Transcriber : IDisposable // long files: FileTranscriber.cs
 {
     private readonly AppSettings _settings;
     private readonly SemaphoreSlim _gate = new(1, 1);

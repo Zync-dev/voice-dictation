@@ -28,7 +28,7 @@ public partial class App : Application
     public HotkeyService Hotkeys { get; private set; } = null!;
     public DictationController Controller { get; private set; } = null!;
     public OverlayWindow Overlay { get; private set; } = null!;
-    /// <summary>Developer aid: --page=N opens the window on that page (0 Home .. 4 Settings).</summary>
+    /// <summary>Developer aid: --page=N opens the window on that page (0 Home .. 4 Transcribe, 5 Settings).</summary>
     public int StartPage { get; private set; }
     public ImageSource? AppIcon { get; private set; }
     /// <summary>AUDIO: an audio setting changed outside the Settings page (the tray's whisper mode toggle).</summary>
@@ -107,6 +107,10 @@ public partial class App : Application
             _ = Modes.TestAsync(e.Args[1], e.Args[2]);
             return;
         }
+        // ---- Developer mode and file transcription checks (App.DevTools.cs) ----
+        if (e.Args.Length == 2 && e.Args[0] == "--devtest") { _ = DevTestAsync(e.Args[1]); return; }
+        if (e.Args.Length == 3 && e.Args[0] == "--filetest") { _ = FileTestAsync(e.Args[1], e.Args[2]); return; }
+        if (e.Args.Length == 3 && e.Args[0] == "--devspeech") { _ = DevSpeechAsync(e.Args[1], e.Args[2]); return; }
 
         _mutex = new Mutex(true, MutexName, out bool isFirst);
         if (!isFirst)
@@ -150,6 +154,7 @@ public partial class App : Application
         listener.Start();
 
         if (!e.Args.Contains("--minimized")) ShowMainWindow();
+        ScheduleScreenshot(e.Args); // developer aid: --shot=out.png (App.DevTools.cs)
         _ = Controller.PrepareModelAsync();
     }
 

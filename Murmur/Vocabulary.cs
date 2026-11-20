@@ -50,9 +50,10 @@ public sealed partial class Vocabulary
     internal const double ShortAudioSeconds = 2.5;
 
     /// <summary>The speech model prompt for one dictation. Takes microseconds; safe on the UI thread.</summary>
-    public string BuildPrompt(ScreenContext? screen, double audioSeconds = double.MaxValue)
+    /// <param name="project">Developer mode: names from the open project (on-device model only), right after the dictionary.</param>
+    public string BuildPrompt(ScreenContext? screen, double audioSeconds = double.MaxValue, IEnumerable<string>? project = null)
     {
-        var dictionary = _settings.Dictionary.Select(d => d.Term.Trim()).Where(t => t.Length > 0);
+        var dictionary = _settings.Dictionary.Select(d => d.Term.Trim()).Where(t => t.Length > 0).Concat(project ?? []);
         bool longEnough = audioSeconds >= ShortAudioSeconds;
         var fromScreen = longEnough && _settings.UseScreenContext && screen is { IsPassword: false, HasText: true } ? ScreenTerms(screen.AllText) : [];
         var fromHistory = longEnough && _settings.PersonalVocabulary ? _historyTerms : [];
