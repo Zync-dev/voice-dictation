@@ -95,6 +95,8 @@ public class AppSettings
     public bool Sounds { get; set; } = true;
     /// <summary>Keep the small resting pill on screen between dictations.</summary>
     public bool ShowRestPill { get; set; }
+    /// <summary>Show the words so far on the dictation card while you speak (on-device speech model only).</summary>
+    public bool ShowLiveText { get; set; } = true;
     public bool LaunchAtStartup { get; set; }
 
     public string DefaultStyle { get; set; } = Styles.Neutral;

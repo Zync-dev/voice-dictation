@@ -64,6 +64,19 @@ public sealed class AudioRecorder
         Level?.Invoke((float)Math.Sqrt(sum / count));
     }
 
+    /// <summary>The newest audio so far (at most <paramref name="maxSamples"/>) without stopping, for the live text.</summary>
+    public float[] Peek(int maxSamples, out int heard)
+    {
+        lock (_gate)
+        {
+            heard = _samples.Count;
+            int count = Math.Min(maxSamples, heard);
+            var tail = new float[count];
+            _samples.CopyTo(heard - count, tail, 0, count);
+            return tail;
+        }
+    }
+
     public float[] Stop()
     {
         var wave = _wave;

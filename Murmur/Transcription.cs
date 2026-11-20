@@ -84,13 +84,16 @@ public sealed class Transcriber : IDisposable
                 if (!File.Exists(model.Path)) await DownloadAsync(model, ct);
                 _factory?.Dispose();
                 _factory = null;
-                _factory = await Task.Run(() =>
+                _mainStopMs = -1;
+                _factory = await Task.Run(async () =>
                 {
                     var factory = WhisperFactory.FromPath(model.Path, FactoryOptions);
                     WarmUp(factory);
+                    _mainStopMs = await MeasureStopMsAsync(factory);
                     return factory;
                 }, ct);
                 _loadedPath = model.Path;
+                Log.Write($"Speech model {model.Id} loaded; a live preview on it stops {_mainStopMs:0}ms after cancel");
             }
         }
         finally { _gate.Release(); }
@@ -105,11 +108,11 @@ public sealed class Transcriber : IDisposable
     /// </summary>
     public async Task EnsureDetectorAsync(CancellationToken ct = default)
     {
-        if (!NeedsDetector || _detector != null || DateTime.UtcNow < _detectorRetryAfter) return;
+        if (!NeedsSmallModel || _detector != null || DateTime.UtcNow < _detectorRetryAfter) return;
         await _detectorGate.WaitAsync(ct);
         try
         {
-            if (_detector == null && NeedsDetector && DateTime.UtcNow >= _detectorRetryAfter) await LoadDetectorAsync(ct);
+            if (_detector == null && NeedsSmallModel && DateTime.UtcNow >= _detectorRetryAfter) await LoadDetectorAsync(ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -134,33 +137,99 @@ public sealed class Transcriber : IDisposable
     private bool NeedsDetector =>
         _settings.Language != "auto" && !string.IsNullOrEmpty(_settings.SecondLanguage) && _settings.SecondLanguage != _settings.Language;
 
+    /// <summary>
+    /// The small model also carries the live text when the main model cannot stop quickly enough (on this kind of
+    /// graphics card a large model's encoder runs ~0.7 s and cannot be interrupted). Only then, and only from disk,
+    /// is it loaded for someone with one language.
+    /// </summary>
+    private bool NeedsSmallModel => NeedsDetector || (_settings.ShowLiveText && _mainStopMs > PreviewStopBudgetMs && SmallModelOnDisk != null);
+
+    private static LocalModel? SmallModelOnDisk => new[] { "tiny", "base" }.Select(LocalModel.Get).FirstOrDefault(m => File.Exists(m.Path));
+
     private async Task LoadDetectorAsync(CancellationToken ct)
     {
         // Prefer a small model that is already on disk; otherwise fetch the smallest one (75 MB).
-        var model = new[] { "tiny", "base" }.Select(LocalModel.Get).FirstOrDefault(m => File.Exists(m.Path)) ?? LocalModel.Get("tiny");
+        var model = SmallModelOnDisk ?? LocalModel.Get("tiny");
         if (!File.Exists(model.Path)) await DownloadAsync(model, ct);
-        await Task.Run(() =>
+        await Task.Run(async () =>
         {
             var factory = WhisperFactory.FromPath(model.Path, FactoryOptions);
             var detector = factory.CreateBuilder().WithLanguage("auto").Build();
             try { detector.DetectLanguageWithProbability(new float[AudioRecorder.SampleRate], new[] { "en", "da" }); } catch { }
+            if (NeedsDetector)
+            {
+                _previewDetector = factory.CreateBuilder().WithLanguage("auto").WithThreads(PreviewThreads).WithAudioContextSize(MinAudioContext).Build();
+                try { _previewDetector.DetectLanguageWithProbability(new float[AudioRecorder.SampleRate], new[] { "en", "da" }); } catch { }
+            }
+            WarmUp(factory);
+            _smallStopMs = await MeasureStopMsAsync(factory);
+            _smallModelId = model.Id;
             _detectorFactory = factory;
             _detector = detector; // published last, fully warmed up
         }, ct);
+        Log.Write($"Small speech model {model.Id} loaded; a live preview on it stops {_smallStopMs:0}ms after cancel");
     }
 
-    /// <summary>Picks between the user's main and second language from the first seconds of the recording.</summary>
-    private string DetectAmongUserLanguages(float[] samples)
+    // ---------- how quickly a live preview gives the graphics card back ----------
+
+    /// <summary>A preview may only run on a model that stops within this time of being cancelled.</summary>
+    private const double PreviewStopBudgetMs = 120;
+    private double _mainStopMs = -1, _smallStopMs = -1;
+    private WhisperProcessor? _previewDetector;
+    private static int PreviewThreads => Math.Clamp(Environment.ProcessorCount - 2, 2, 8);
+    private string _smallModelId = "";
+
+    /// <summary>
+    /// Starts a pass, cancels it just after the encoder starts and times how long whisper takes to let go.
+    /// Whisper checks for cancellation between decoding steps, not inside the encoder, so this is roughly one encoder run.
+    /// </summary>
+    private static async Task<double> MeasureStopMsAsync(WhisperFactory factory)
     {
+        try
+        {
+            var cts = new CancellationTokenSource(); // not disposed: the delayed cancel below may still fire
+            var watch = new System.Diagnostics.Stopwatch();
+            var processor = factory.CreateBuilder().WithLanguage("en").WithNoContext().WithAudioContextSize(MinAudioContext)
+                .WithEncoderBeginHandler(data =>
+                {
+                    Task.Delay(5).ContinueWith(t => { watch.Start(); cts.Cancel(); });
+                    return true;
+                })
+                .Build();
+            try { await foreach (var segment in processor.ProcessAsync(new float[AudioRecorder.SampleRate * 3], cts.Token)) { } }
+            catch (OperationCanceledException) { }
+            await processor.DisposeAsync();
+            return watch.IsRunning ? watch.Elapsed.TotalMilliseconds : 0;
+        }
+        catch (Exception ex)
+        {
+            Log.Write("Measuring the speech model failed: " + ex.Message);
+            return double.MaxValue;
+        }
+    }
+
+    /// <summary>The model the live preview runs on: the main one if it stops in time, else the small one, else none.</summary>
+    private WhisperFactory? PreviewFactory =>
+        _mainStopMs >= 0 && _mainStopMs <= PreviewStopBudgetMs ? _factory
+        : _detectorFactory != null && _smallStopMs >= 0 && _smallStopMs <= PreviewStopBudgetMs ? _detectorFactory
+        : null;
+
+    /// <summary>Which model the live previews use, for the log.</summary>
+    public string PreviewModel => PreviewFactory == null ? "none" : PreviewFactory == _factory ? _settings.LocalModel : _smallModelId;
+
+    /// <summary>Picks between the user's main and second language from the first seconds of the recording.</summary>
+    private string DetectAmongUserLanguages(float[] samples, WhisperProcessor? detector = null)
+    {
+        detector ??= _detector;
         string main = _settings.Language, second = _settings.SecondLanguage;
-        if (_detector == null) return main;
+        if (detector == null) return main;
         try
         {
             var head = samples.Length > AudioRecorder.SampleRate * 10 ? samples[..(AudioRecorder.SampleRate * 10)] : samples;
             // The library compares only these two and returns the likelier one; ties and errors go to the first (main).
             // The probability it reports is that language's share among all languages, so it is not a usable threshold.
             // Overall best guess: Danish is often heard as German or Swedish, so anything that is not the second language counts as the main one.
-            var (language, _) = _detector.DetectLanguageWithProbability(head);
+            var (language, _) = detector.DetectLanguageWithProbability(head);
             return language == second ? second : main;
         }
         catch (Exception ex)
@@ -206,10 +275,12 @@ public sealed class Transcriber : IDisposable
         File.Move(temp, model.Path, true);
     }
 
-    public async Task<Transcript> TranscribeAsync(float[] samples, string vocabularyPrompt, CancellationToken ct = default)
+    /// <param name="previews">The live previews of this recording, whose language choice is reused when it heard (nearly) all of it.</param>
+    public async Task<Transcript> TranscribeAsync(float[] samples, string vocabularyPrompt, CancellationToken ct = default, PreviewSession? previews = null)
     {
+        LastQueueMs = 0;
         if (_settings.Engine != SttEngine.Cloud)
-            return await TranscribeLocalAsync(samples, vocabularyPrompt, ct);
+            return await TranscribeLocalAsync(samples, vocabularyPrompt, ct, previews);
 
         // Telling the two languages apart happens on this PC even when the transcription is in the cloud.
         _ = EnsureDetectorAsync();
@@ -251,18 +322,165 @@ public sealed class Transcriber : IDisposable
         yield return start == 0 ? samples : samples[start..];
     }
 
-    private async Task<Transcript> TranscribeLocalAsync(float[] samples, string prompt, CancellationToken ct)
+    /// <summary>How long the latest transcription waited for the graphics card (a live preview finishing), in ms.</summary>
+    public double LastQueueMs { get; private set; }
+
+    /// <summary>
+    /// True when a live preview can run: on-device engine, the chosen model loaded, and a model that gives the
+    /// graphics card back within ~0.1 s of being cancelled, so the final transcription is never kept waiting.
+    /// </summary>
+    public bool CanPreview =>
+        _settings.Engine == SttEngine.Local && _factory != null && _loadedPath == LocalModel.Get(_settings.LocalModel).Path && PreviewFactory != null;
+
+    /// <summary>The language decision for the previews of one recording, so detection does not run on every preview.</summary>
+    public sealed class PreviewSession
     {
+        internal string? Language;
+        internal int DecidedAt;
+    }
+
+    /// <summary>
+    /// Words so far, for the card while recording: the newest audio through an already-loaded model with a narrow
+    /// window (the main model when it can stop in time, else the small one). Never loads or downloads a model.
+    /// Cancelling stops whisper at its next step and frees the graphics card for the final transcription.
+    /// </summary>
+    public async Task<string> PreviewAsync(float[] samples, int heard, string prompt, PreviewSession session, CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            var factory = PreviewFactory;
+            if (factory == null || !CanPreview) return "";
+            return await Task.Run(async () =>
+            {
+                // Pick the language once, and once more when there is enough speech to be sure; after that it is fixed.
+                const int sure = AudioRecorder.SampleRate * 4;
+                if (session.Language == null || (NeedsDetector && session.DecidedAt < sure && heard >= sure))
+                {
+                    // The same detector the final pass uses, with a narrower window: it cannot be interrupted, so it must be short.
+                    if (NeedsDetector && _detectorFactory != null)
+                        _previewDetector ??= _detectorFactory.CreateBuilder().WithLanguage("auto").WithThreads(PreviewThreads).WithAudioContextSize(MinAudioContext).Build();
+                    session.Language = NeedsDetector ? DetectAmongUserLanguages(samples, _previewDetector) : _settings.Language == "auto" ? null : _settings.Language;
+                    session.DecidedAt = heard;
+                    // Released while the language was being picked: do not start on the words at all.
+                    ct.ThrowIfCancellationRequested();
+                }
+                string language = session.Language ?? "auto";
+                var builder = factory.CreateBuilder()
+                    .WithLanguage(language)
+                    .WithThreads(Math.Clamp(Environment.ProcessorCount - 2, 2, 8))
+                    .WithNoContext()
+                    .WithAudioContextSize(AudioContextFor(samples.Length));
+                if (!string.IsNullOrWhiteSpace(prompt)) builder = builder.WithPrompt(prompt);
+                await using var processor = builder.Build();
+                var sb = new StringBuilder();
+                string? detected = null;
+                await foreach (var segment in processor.ProcessAsync(samples, ct))
+                {
+                    sb.Append(segment.Text);
+                    detected ??= segment.Language;
+                }
+                // On auto, the main model's first guess is kept for the rest of the recording.
+                if (language == "auto" && !string.IsNullOrEmpty(detected)) session.Language = detected;
+                return sb.ToString().Trim();
+            }, ct);
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Developer aid for the live-text bench: where a preview spends its time, and how fast it stops when cancelled.</summary>
+    internal async Task<List<string>> ProfilePreviewAsync(float[] samples, string language)
+    {
+        var lines = new List<string> { "runtime: " + Whisper.net.LibraryLoader.RuntimeOptions.LoadedLibrary };
+        var factory = _factory ?? throw new InvalidOperationException("Model not loaded.");
+        await Task.Run(async () =>
+        {
+            foreach (int ctx in new[] { 512, 384, 256 })
+            foreach (int cancelAfter in new[] { -1, 50, 150, 300, 500 })
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                double encoder = -1, cancelled = -1;
+                var segments = new List<double>();
+                var cts = new CancellationTokenSource(); // not disposed: a late timer may still cancel it
+                var builder = factory.CreateBuilder().WithLanguage(language).WithThreads(Math.Clamp(Environment.ProcessorCount - 2, 2, 8))
+                    .WithNoContext().WithAudioContextSize(ctx)
+                    .WithEncoderBeginHandler(data =>
+                    {
+                        encoder = watch.Elapsed.TotalMilliseconds;
+                        if (cancelAfter >= 0)
+                            Task.Delay(cancelAfter).ContinueWith(t => { cancelled = watch.Elapsed.TotalMilliseconds; cts.Cancel(); });
+                        return true;
+                    });
+                var processor = builder.Build();
+                double built = watch.Elapsed.TotalMilliseconds;
+                var sb = new StringBuilder();
+                try
+                {
+                    await foreach (var segment in processor.ProcessAsync(samples, cts.Token))
+                    {
+                        segments.Add(watch.Elapsed.TotalMilliseconds);
+                        sb.Append(segment.Text);
+                    }
+                }
+                catch (OperationCanceledException) { }
+                double end = watch.Elapsed.TotalMilliseconds;
+                await processor.DisposeAsync(); // waits for whisper itself to stop
+                double released = watch.Elapsed.TotalMilliseconds;
+                lines.Add($"ctx {ctx} cancel {(cancelAfter < 0 ? "never" : $"+{cancelAfter}ms after encoder start")}: build {built:0}ms, encoder starts {encoder:0}ms, " +
+                          $"segments at {string.Join("/", segments.Select(s => s.ToString("0")))}ms, enumeration ends {end:0}ms, whisper released {released:0}ms" +
+                          (cancelled >= 0 ? $", released {released - cancelled:0}ms after cancel" : "") + $" [{sb.ToString().Trim()}]");
+            }
+
+            // A final pass started while a cancelled preview is still inside its encoder: is it safe, and how much slower?
+            async Task<(string Text, double Ms)> Run(CancellationToken ct, Action? onEncoder = null)
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                var builder = factory.CreateBuilder().WithLanguage(language).WithThreads(Math.Clamp(Environment.ProcessorCount - 2, 2, 8))
+                    .WithAudioContextSize(AudioContextFor(samples.Length));
+                if (onEncoder != null) builder = builder.WithEncoderBeginHandler(data => { onEncoder(); return true; });
+                var processor = builder.Build();
+                var sb = new StringBuilder();
+                try { await foreach (var segment in processor.ProcessAsync(samples, ct)) sb.Append(segment.Text); }
+                catch (OperationCanceledException) { }
+                await processor.DisposeAsync();
+                return (sb.ToString().Trim(), watch.Elapsed.TotalMilliseconds);
+            }
+            var alone = await Run(CancellationToken.None);
+            lines.Add($"final alone: {alone.Ms:0}ms [{alone.Text}]");
+            foreach (int overlapAt in new[] { 20, 150, 400 })
+            {
+                var cts = new CancellationTokenSource();
+                var encoderStarted = new TaskCompletionSource();
+                var preview = Run(cts.Token, () => encoderStarted.TrySetResult());
+                await encoderStarted.Task;
+                await Task.Delay(overlapAt);
+                cts.Cancel();
+                var final = await Run(CancellationToken.None);
+                await preview;
+                lines.Add($"final started {overlapAt}ms into a cancelled preview's encoder, without waiting: {final.Ms:0}ms [{final.Text}]");
+            }
+        });
+        return lines;
+    }
+
+    private async Task<Transcript> TranscribeLocalAsync(float[] samples, string prompt, CancellationToken ct, PreviewSession? previews)
+    {
+        var queue = System.Diagnostics.Stopwatch.StartNew();
         await EnsureLocalModelAsync(ct);
         _ = EnsureDetectorAsync(); // never awaited here: the sentence must not wait for a download
         await _gate.WaitAsync(ct);
+        LastQueueMs = queue.Elapsed.TotalMilliseconds;
         try
         {
             var factory = _factory!;
             return await Task.Run(async () =>
             {
                 var watch = System.Diagnostics.Stopwatch.StartNew();
-                string requested = NeedsDetector ? DetectAmongUserLanguages(samples) : _settings.Language;
+                // The previews already picked between the two languages; when they heard (nearly) everything the
+                // detector would look at, that choice stands and the final pass does not detect again.
+                int head = Math.Min(samples.Length, AudioRecorder.SampleRate * 10);
+                bool reuse = NeedsDetector && previews?.Language != null && previews.DecidedAt >= head * 0.8;
+                string requested = reuse ? previews!.Language! : NeedsDetector ? DetectAmongUserLanguages(samples) : _settings.Language;
                 double detectMs = watch.Elapsed.TotalMilliseconds;
 
                 int audioContext = AudioContextFor(samples.Length);
@@ -280,7 +498,7 @@ public sealed class Transcriber : IDisposable
                     detected ??= segment.Language;
                 }
                 string? language = requested == "auto" ? detected : requested;
-                LastTiming = $"model={_settings.LocalModel} language={language} detect={detectMs:0}ms transcribe={watch.Elapsed.TotalMilliseconds - detectMs:0}ms frames={audioContext}";
+                LastTiming = $"model={_settings.LocalModel} language={language} queue={LastQueueMs:0}ms detect={(reuse ? "from preview" : $"{detectMs:0}ms")} transcribe={watch.Elapsed.TotalMilliseconds - detectMs:0}ms frames={audioContext}";
                 return new Transcript(sb.ToString().Trim(), language);
             }, ct);
         }
@@ -346,6 +564,7 @@ public sealed class Transcriber : IDisposable
 
     public void Dispose()
     {
+        _previewDetector?.Dispose();
         _detector?.Dispose();
         _detectorFactory?.Dispose();
         _factory?.Dispose();

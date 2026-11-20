@@ -3,12 +3,15 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Topmost="True" ShowInTaskbar="False" ShowActivated="False" Focusable="False"
-        ResizeMode="NoResize" Width="760" Height="190"
+        ResizeMode="NoResize" Width="760" Height="280"
         FontFamily="{StaticResource FontBody}" UseLayoutRounding="True"
         Title="Murmur dictation pill">
     <!--
         The dictation card. Hidden when idle; rises from the bottom of the screen while you dictate.
         The waveform flows into Murmur's caret: speech on the left, the text cursor on the right, as in the logo.
+        While you speak, the words so far gather above it and end in a small caret. When the text has landed,
+        the waveform folds into the caret, the caret becomes a tick, and the card holds what was inserted for a
+        few seconds with keycaps to copy, undo or rewrite it.
         Keys are drawn as keycaps, and the keycaps are also the buttons.
         Transparent pixels pass clicks through; the keycaps can be clicked without taking focus from your app.
         Dark in both themes, overlay- colours only.
@@ -41,6 +44,15 @@
             <Setter Property="Margin" Value="6,0,0,0"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
+        <!-- A hairline between groups of keycaps. -->
+        <Style x:Key="PillKeyGap" TargetType="Rectangle">
+            <Setter Property="Width" Value="1"/>
+            <Setter Property="Height" Value="14"/>
+            <Setter Property="Margin" Value="10,0,10,0"/>
+            <Setter Property="Fill" Value="#56727D"/>
+            <Setter Property="Opacity" Value="0.5"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
     </Window.Resources>
 
     <Grid>
@@ -61,40 +73,89 @@
                 </Border.Effect>
             </Border>
 
-            <Border x:Name="Pill" Height="56" CornerRadius="28" Background="#0C1215" BorderThickness="1" Padding="22,0,14,0" SnapsToDevicePixels="True">
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <!-- Waveform flowing into the caret; a tick replaces both when the text has landed. -->
-                    <Grid VerticalAlignment="Center">
-                        <Grid.LayoutTransform>
-                            <ScaleTransform x:Name="MeterScale" ScaleX="1" ScaleY="1"/>
-                        </Grid.LayoutTransform>
-                        <StackPanel x:Name="Meter" Orientation="Horizontal" Height="30" VerticalAlignment="Center"/>
-                        <Path x:Name="Tick" Width="24" Height="24" HorizontalAlignment="Right" Data="M5,12.5 L9.5,17 L19,7.5"
-                              Stroke="#45E0BC" StrokeThickness="2.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
-                              StrokeDashArray="8 8" StrokeDashOffset="8" Opacity="0"/>
-                    </Grid>
+            <Border x:Name="Pill" CornerRadius="28" Background="#0C1215" BorderThickness="1" Padding="22,0,14,0" SnapsToDevicePixels="True">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
 
-                    <TextBlock x:Name="Label" Margin="16,0,0,0" VerticalAlignment="Center" FontSize="14" MaxWidth="400" TextTrimming="CharacterEllipsis">
-                        <Run x:Name="StatusRun" FontWeight="SemiBold" Foreground="#EAF2F0"/><Run x:Name="ContextRun" Foreground="#93A9AC"/>
-                    </TextBlock>
+                    <!-- The words so far while you speak; what was inserted afterwards. Grows upwards. -->
+                    <Border x:Name="TextHost" Height="0" Padding="0,17,8,0" ClipToBounds="True" VerticalAlignment="Top">
+                        <TextBlock x:Name="Words" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight"
+                                   TextWrapping="Wrap" VerticalAlignment="Top" Foreground="#93A9AC"/>
+                    </Border>
 
-                    <TextBlock x:Name="Timer" Margin="18,0,0,0" FontFamily="{StaticResource FontMono}" FontSize="12" Foreground="#93A9AC" VerticalAlignment="Center"/>
+                    <DockPanel x:Name="MainRow" Grid.Row="1" Height="56" LastChildFill="False">
+                        <!-- Waveform flowing into the caret; a tick replaces the caret when the text has landed. -->
+                        <Grid DockPanel.Dock="Left" VerticalAlignment="Center">
+                            <Grid.LayoutTransform>
+                                <ScaleTransform x:Name="MeterScale" ScaleX="1" ScaleY="1"/>
+                            </Grid.LayoutTransform>
+                            <StackPanel x:Name="Meter" Orientation="Horizontal" Height="30" VerticalAlignment="Center"/>
+                            <Path x:Name="Tick" Width="24" Height="24" HorizontalAlignment="Right" Data="M5,12.5 L9.5,17 L19,7.5"
+                                  Stroke="#45E0BC" StrokeThickness="2.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                  StrokeDashArray="8 8" StrokeDashOffset="8" Opacity="0"/>
+                        </Grid>
 
-                    <StackPanel x:Name="Buttons" Orientation="Horizontal" Margin="18,0,0,0" VerticalAlignment="Center">
-                        <StackPanel x:Name="FinishGroup" Orientation="Horizontal" Margin="0,0,12,0">
-                            <Border x:Name="StopButton" Style="{StaticResource PillKey}" ToolTip="Finish and insert">
-                                <TextBlock x:Name="FinishKeys" Style="{StaticResource PillKeyText}"/>
-                            </Border>
-                            <TextBlock Style="{StaticResource PillKeyHint}" Text="insert"/>
+                        <!-- While recording: the key that finishes, and Esc. -->
+                        <StackPanel x:Name="Buttons" DockPanel.Dock="Right" Orientation="Horizontal" Margin="18,0,0,0" VerticalAlignment="Center">
+                            <StackPanel x:Name="FinishGroup" Orientation="Horizontal" Margin="0,0,12,0">
+                                <Border x:Name="StopButton" Style="{StaticResource PillKey}" ToolTip="Finish and insert">
+                                    <TextBlock x:Name="FinishKeys" Style="{StaticResource PillKeyText}"/>
+                                </Border>
+                                <TextBlock Style="{StaticResource PillKeyHint}" Text="insert"/>
+                            </StackPanel>
+                            <StackPanel x:Name="CancelGroup" Orientation="Horizontal">
+                                <Border x:Name="CloseButton" Style="{StaticResource PillKey}" ToolTip="Cancel">
+                                    <TextBlock Style="{StaticResource PillKeyText}" Text="Esc"/>
+                                </Border>
+                                <TextBlock Style="{StaticResource PillKeyHint}" Text="cancel"/>
+                            </StackPanel>
                         </StackPanel>
-                        <StackPanel x:Name="CancelGroup" Orientation="Horizontal">
-                            <Border x:Name="CloseButton" Style="{StaticResource PillKey}" ToolTip="Cancel">
+
+                        <!-- After inserting: what you can do with the text. -->
+                        <StackPanel x:Name="Actions" DockPanel.Dock="Right" Orientation="Horizontal" Margin="18,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
+                            <Border x:Name="CopyKey" Tag="copy" Style="{StaticResource PillKey}" ToolTip="Copy the text">
+                                <TextBlock Style="{StaticResource PillKeyText}" Text="Copy"/>
+                            </Border>
+                            <Border x:Name="UndoKey" Tag="undo" Style="{StaticResource PillKey}" Margin="6,0,0,0" ToolTip="Take the text back out of the app">
+                                <TextBlock Style="{StaticResource PillKeyText}" Text="Undo"/>
+                            </Border>
+                            <StackPanel x:Name="RewriteKeys" Orientation="Horizontal">
+                                <Rectangle Style="{StaticResource PillKeyGap}"/>
+                                <Border Tag="shorter" Style="{StaticResource PillKey}" ToolTip="Rewrite it shorter">
+                                    <TextBlock Style="{StaticResource PillKeyText}" Text="Shorter"/>
+                                </Border>
+                                <Border Tag="formal" Style="{StaticResource PillKey}" Margin="6,0,0,0" ToolTip="Rewrite it formally">
+                                    <TextBlock Style="{StaticResource PillKeyText}" Text="Formal"/>
+                                </Border>
+                                <Border Tag="casual" Style="{StaticResource PillKey}" Margin="6,0,0,0" ToolTip="Rewrite it casually">
+                                    <TextBlock Style="{StaticResource PillKeyText}" Text="Casual"/>
+                                </Border>
+                            </StackPanel>
+                            <Rectangle Style="{StaticResource PillKeyGap}"/>
+                            <Border x:Name="DismissKey" Tag="close" Style="{StaticResource PillKey}" ToolTip="Close">
                                 <TextBlock Style="{StaticResource PillKeyText}" Text="Esc"/>
                             </Border>
-                            <TextBlock Style="{StaticResource PillKeyHint}" Text="cancel"/>
                         </StackPanel>
-                    </StackPanel>
-                </StackPanel>
+
+                        <TextBlock x:Name="Timer" DockPanel.Dock="Right" Margin="18,0,0,0" FontFamily="{StaticResource FontMono}" FontSize="12" Foreground="#93A9AC" VerticalAlignment="Center"/>
+
+                        <!-- Last, so the keycaps keep their room and a long status line is trimmed instead. -->
+                        <TextBlock x:Name="Label" DockPanel.Dock="Left" Margin="16,0,0,0" VerticalAlignment="Center" FontSize="14" MaxWidth="400" TextTrimming="CharacterEllipsis">
+                            <Run x:Name="StatusRun" FontWeight="SemiBold" Foreground="#EAF2F0"/><Run x:Name="ContextRun" Foreground="#93A9AC"/>
+                        </TextBlock>
+                    </DockPanel>
+
+                    <!-- How long the inserted text stays; it stops while the pointer is on the card. -->
+                    <Rectangle x:Name="Countdown" Grid.Row="1" Height="2" RadiusX="1" RadiusY="1" VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
+                               Margin="2,0,10,6" Fill="#56727D" Opacity="0" RenderTransformOrigin="0,0.5" IsHitTestVisible="False">
+                        <Rectangle.RenderTransform>
+                            <ScaleTransform x:Name="CountdownScale" ScaleX="1"/>
+                        </Rectangle.RenderTransform>
+                    </Rectangle>
+                </Grid>
             </Border>
         </Grid>
     </Grid>

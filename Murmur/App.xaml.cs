@@ -49,6 +49,12 @@ public partial class App : Application
             return;
         }
 
+        if (e.Args.Length == 3 && e.Args[0] == "--live-bench")
+        {
+            _ = LivePreview.BenchAsync(e.Args[1], e.Args[2]);
+            return;
+        }
+
         _mutex = new Mutex(true, MutexName, out bool isFirst);
         if (!isFirst)
         {
@@ -386,34 +392,66 @@ public partial class App : Application
         Shutdown();
     }
 
-    /// <summary>Developer aid: Murmur.exe --pill-demo plays the dictation pill through its states without a microphone.</summary>
+    /// <summary>
+    /// Developer aid: Murmur.exe --pill-demo plays the dictation card through its states without a microphone:
+    /// the words gathering while you speak, writing, the inserted text with its keycaps, a rewrite, command mode
+    /// and an error. Times from when the demo starts (4 s after launch): listening 0 s, words
+    /// from 1.2 s, writing 5.4 s, inserted 6.6 s, rewriting 9 s, rewritten 10.4 s, a hint 12 s, "Copied" 13.8 s,
+    /// command 16 s, error 19 s;
+    /// then it repeats every 23.5 s.
+    /// It never pastes, copies or writes history (the card's keycaps only close it).
+    /// </summary>
     private async Task PillDemoAsync()
     {
-        async Task Speak(int ms)
+        // Speaks for ms milliseconds; each (at, text) shows those words at that moment, as the live preview would.
+        async Task Speak(int ms, params (int At, string Text)[] words)
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
+            int next = 0;
             while (watch.ElapsedMilliseconds < ms)
             {
                 double t = watch.ElapsedMilliseconds;
                 double syllable = Math.Max(0, Math.Sin(t * 0.011)) * (0.55 + 0.45 * Math.Sin(t * 0.0031 + 1));
                 Overlay.PushLevel((float)(syllable * 0.14 + 0.008));
+                if (next < words.Length && t >= words[next].At) Overlay.ShowLiveText(words[next++].Text);
                 await Task.Delay(40);
             }
         }
 
-        await Task.Delay(1500);
+        const string said = "So I looked at the numbers this morning, and the new card feels a lot calmer. " +
+                            "People finish their sentences before they look down, which is exactly what we wanted. " +
+                            "Let's keep it for the release on Thursday and check the numbers again next week.";
+        await Task.Delay(4000); // let the speech models finish loading first, as they would before a real dictation
         while (true)
         {
+            var loop = System.Diagnostics.Stopwatch.StartNew();
+            async Task Until(int ms) { int wait = ms - (int)loop.ElapsedMilliseconds; if (wait > 0) await Task.Delay(wait); }
+
             Overlay.ShowRecording(HotkeyKind.Dictate, false);
-            await Speak(3400);
+            await Speak(5400,
+                (1200, "So I looked at the numbers"),
+                (2400, "So I looked at the numbers this morning and the new card"),
+                (3600, "So I looked at the numbers this morning, and the new card feels a lot calmer. People finish their sentences before they look down"),
+                (4800, said[..said.IndexOf(" and check", StringComparison.Ordinal)]));
             Overlay.ShowBusy("Writing");
-            await Task.Delay(1600);
-            Overlay.ShowDone(12);
-            await Task.Delay(2800);
+            await Until(6600);
+            Overlay.ShowResult(said, "slack", canRewrite: true);
+            await Until(9000);
+            Overlay.ShowRewriting();
+            await Until(10400);
+            Overlay.ShowResult("The new card feels calmer: people finish their sentences before looking down, which is what we wanted.",
+                "slack", canRewrite: true, status: "Made shorter");
+            await Until(12000);
+            Overlay.NoteOnResult("Click into Slack first", OverlayWindow.Note.Info, seconds: 3);
+            await Until(13800);
+            Overlay.NoteOnResult("Copied", OverlayWindow.Note.Done, seconds: 1.2);
+            await Until(16000);
             Overlay.ShowRecording(HotkeyKind.Command, true);
-            await Speak(2600);
+            await Speak(3000,
+                (1200, "Turn this into"),
+                (2400, "Turn this into a short reply that says yes to Thursday"));
             Overlay.Flash("No microphone found", error: true);
-            await Task.Delay(5200);
+            await Until(23500);
         }
     }
 

@@ -1,4 +1,8 @@
+using System.Globalization;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -10,14 +14,20 @@ namespace Murmur;
 
 /// <summary>
 /// The dictation card: rises at the bottom centre of the screen the app is on while you dictate, and is gone
-/// otherwise. It never takes focus. Its stop and cancel buttons can be clicked without stealing focus from
-/// the app you are typing into. States and timings follow design-system/project/motion.md.
+/// otherwise. It never takes focus. Its keycaps can be clicked without stealing focus from the app you are
+/// typing into, so Ctrl+Z and paste still reach that app. States and timings follow design-system/project/motion.md.
 /// </summary>
 public partial class OverlayWindow : Window
 {
-    private enum PillState { Hidden, Rest, Listening, HandsFree, Command, Writing, Info, Done, Error }
+    private enum PillState { Hidden, Rest, Listening, HandsFree, Command, Writing, Info, Result, Rewriting, Error }
 
     private const int BarCount = 18;
+    /// <summary>The card's width while it carries text, so lines wrap the same way from first word to last.</summary>
+    private const double TextCardWidth = 620;
+    private const double LineHeight = 20;
+    private const int LiveLines = 2, ResultLines = 3;
+    private static readonly TimeSpan ResultTime = TimeSpan.FromSeconds(5);
+
     private readonly Rectangle[] _bars = new Rectangle[BarCount];
     private readonly TranslateTransform[] _wave = new TranslateTransform[BarCount];
     private readonly double[] _history = new double[BarCount];
@@ -25,6 +35,8 @@ public partial class OverlayWindow : Window
     private readonly Rectangle _caret = new() { Width = 4, Height = 28, RadiusX = 2, RadiusY = 2, Margin = new Thickness(5, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
     private readonly SolidColorBrush _glowBrush = new(Theme.OverlayVoice);
     private readonly SolidColorBrush _edgeBrush = new(Theme.OverlayLine);
+    private readonly SolidColorBrush _mutedBrush = new(Theme.OverlayMuted);
+    private readonly SolidColorBrush _inkBrush = new(Theme.OverlayInk);
     private readonly DispatcherTimer _returnTimer = new();
     private readonly DispatcherTimer _hideTimer = new() { Interval = TimeSpan.FromMilliseconds(220) };
     private readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromMilliseconds(250) };
@@ -34,14 +46,24 @@ public partial class OverlayWindow : Window
     private DateTime _recordingStarted;
     private bool _restVisible;
     private double _level;
+    private bool _hasText;
+    private bool _meterFolded;
+    private string[] _liveWords = [];
+    private DateTime _closesAt;
+    private TimeSpan _closeLeft;
 
     /// <summary>The user clicked the stop button: finish the dictation and insert the text.</summary>
     public event Action? StopRequested;
     /// <summary>The user clicked the close button: throw the recording away (or dismiss a message).</summary>
     public event Action? CancelRequested;
+    /// <summary>A keycap on the inserted-text card: "copy", "undo", "shorter", "formal", "casual" or "close".</summary>
+    public event Action<string>? ActionRequested;
 
-    /// <summary>True while a short message (a note, an error, the inserted tick) is on its timer.</summary>
-    public bool IsShowingMessage => _state is PillState.Info or PillState.Error or PillState.Done;
+    /// <summary>True while a short message, the inserted text or a rewrite is on screen.</summary>
+    public bool IsShowingMessage => _state is PillState.Info or PillState.Error or PillState.Result or PillState.Rewriting;
+
+    /// <summary>True while the card holds the inserted text and its keycaps (Esc closes it).</summary>
+    public bool IsShowingResult => _state is PillState.Result or PillState.Rewriting;
 
     private bool IsLive => _state is PillState.Listening or PillState.HandsFree or PillState.Command;
 
@@ -52,10 +74,8 @@ public partial class OverlayWindow : Window
         {
             _bars[i] = new Rectangle
             {
-                Width = 3, Height = 4, RadiusX = 1.5, RadiusY = 1.5, Margin = new Thickness(0, 0, i == BarCount - 1 ? 0 : 2, 0),
-                // Older sound fades out to the left; the newest, next to the caret, is brightest.
-                Opacity = 1,
-                Fill = _barBrush, VerticalAlignment = VerticalAlignment.Center,
+                Width = 3, Height = 4, RadiusX = 1.5, RadiusY = 1.5, Margin = BarMargin(i),
+                Opacity = 1, Fill = _barBrush, VerticalAlignment = VerticalAlignment.Center,
                 RenderTransform = _wave[i] = new TranslateTransform()
             };
             Meter.Children.Add(_bars[i]);
@@ -66,11 +86,22 @@ public partial class OverlayWindow : Window
         Pill.BorderBrush = _edgeBrush;
 
         _returnTimer.Tick += (_, _) => ToIdle();
-        _hideTimer.Tick += (_, _) => { _hideTimer.Stop(); if (_state == PillState.Hidden) Hide(); };
+        _hideTimer.Tick += (_, _) => { _hideTimer.Stop(); if (_state == PillState.Hidden) { Hide(); ResetLayout(); } };
         _clock.Tick += (_, _) => UpdateClock();
 
         StopButton.MouseLeftButtonUp += (_, e) => { e.Handled = true; StopRequested?.Invoke(); };
         CloseButton.MouseLeftButtonUp += (_, e) => { e.Handled = true; CancelRequested?.Invoke(); };
+        foreach (var key in new[] { CopyKey, UndoKey, DismissKey }.Concat(RewriteKeys.Children.OfType<Border>()))
+            key.MouseLeftButtonUp += (sender, e) =>
+            {
+                e.Handled = true;
+                if (_state == PillState.Result && sender is FrameworkElement { Tag: string action }) ActionRequested?.Invoke(action);
+                else if (_state == PillState.Rewriting && sender == DismissKey) ActionRequested?.Invoke("close");
+            };
+
+        // The inserted text waits while the pointer is on the card.
+        PillHost.MouseEnter += (_, _) => PauseClose();
+        PillHost.MouseLeave += (_, _) => ResumeClose();
 
         SourceInitialized += (_, _) =>
         {
@@ -98,7 +129,8 @@ public partial class OverlayWindow : Window
     public void ShowRecording(HotkeyKind mode, bool handsFree)
     {
         bool command = mode == HotkeyKind.Command;
-        if (!IsLive) _recordingStarted = DateTime.UtcNow;
+        bool fresh = !IsLive;
+        if (fresh) _recordingStarted = DateTime.UtcNow;
         var context = ActiveWindowInfo.Get();
         string app = Pretty(context.Process);
         var settings = ((App)Application.Current).Settings;
@@ -108,16 +140,105 @@ public partial class OverlayWindow : Window
         Enter(command ? PillState.Command : handsFree ? PillState.HandsFree : PillState.Listening,
             command ? "Say what to do" : "Listening", where,
             command ? Theme.OverlayCommand : Theme.OverlayVoice);
+        if (fresh) ClearText(); // a new recording starts with no words, whatever the card held before
+    }
+
+    /// <summary>
+    /// The words heard so far, while recording and while the final text is being written. Shows the newest
+    /// two lines; older words leave at the start behind an ellipsis. Words that changed fade in.
+    /// </summary>
+    public void ShowLiveText(string text)
+    {
+        if (!IsLive && _state != PillState.Writing) return;
+        var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0) return;
+
+        int same = 0;
+        while (same < words.Length && same < _liveWords.Length && Norm(words[same]) == Norm(_liveWords[same])) same++;
+        if (same == words.Length && words.Length == _liveWords.Length && _hasText) return;
+        _liveWords = words;
+
+        int first = FirstShownWord(words, LiveLines);
+        int fresh = Math.Max(first, same);
+        string stable = (first > 0 && !words[first].StartsWith('…') ? "…" : "") + string.Join(' ', words[first..fresh]);
+        string added = string.Join(' ', words[fresh..]);
+
+        Words.BeginAnimation(OpacityProperty, null);
+        Words.Opacity = 1;
+        Words.MaxHeight = double.PositiveInfinity;
+        Words.TextTrimming = TextTrimming.None;
+        Words.Inlines.Clear();
+        if (stable.Length > 0) Words.Inlines.Add(new Run(added.Length > 0 ? stable + " " : stable) { Foreground = _mutedBrush });
+        if (added.Length > 0)
+        {
+            var brush = new SolidColorBrush(Theme.MotionEnabled ? Color.FromArgb(0, Theme.OverlayMuted.R, Theme.OverlayMuted.G, Theme.OverlayMuted.B) : Theme.OverlayMuted);
+            Words.Inlines.Add(new Run(added) { Foreground = brush });
+            if (Theme.MotionEnabled)
+                brush.BeginAnimation(SolidColorBrush.ColorProperty, new ColorAnimation(Theme.OverlayMuted, new Duration(Theme.DurBase)) { EasingFunction = Theme.EaseOut });
+        }
+        // The text ends in a small caret, the cursor where these words will land.
+        Words.Inlines.Add(new InlineUIContainer(new Rectangle
+        {
+            Width = 2, Height = 15, RadiusX = 1, RadiusY = 1, Fill = _glowBrush, Margin = new Thickness(3, 0, 0, 0)
+        }) { BaselineAlignment = BaselineAlignment.Center });
+        ShowText();
     }
 
     /// <summary>Work in progress: transcribing, thinking, downloading a model.</summary>
     public void ShowBusy(string text) => Enter(PillState.Writing, text, "", Theme.OverlayThink);
 
-    /// <summary>Text has landed at the cursor.</summary>
-    public void ShowDone(int words)
+    /// <summary>
+    /// Text has landed at the cursor: the card shows it for a few seconds with keycaps to copy it, take it back
+    /// out, or (with an AI model) rewrite it. The pointer on the card holds it there.
+    /// </summary>
+    public void ShowResult(string text, string app, bool canRewrite, string status = "Inserted")
     {
-        Enter(PillState.Done, words == 1 ? "1 word" : $"{words:N0} words", "  inserted", Theme.OverlayScript);
-        ReturnAfter(TimeSpan.FromMilliseconds(1100));
+        Words.BeginAnimation(OpacityProperty, null);
+        Words.Inlines.Clear();
+        Words.Text = text.Replace("\r", "").Replace("\n\n", "\n");
+        Words.Foreground = _inkBrush;
+        Words.MaxHeight = ResultLines * LineHeight;
+        Words.TextTrimming = TextTrimming.CharacterEllipsis;
+        _liveWords = [];
+        RewriteKeys.Visibility = canRewrite ? Visibility.Visible : Visibility.Collapsed;
+        // "Inserted into Slack"; a rewrite says only what it did ("Made shorter"), the app is the same.
+        Enter(PillState.Result, status, status == "Inserted" ? $"  into {Pretty(app)}" : "", Theme.OverlayScript);
+        if (Theme.MotionEnabled)
+            Words.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, new Duration(Theme.DurBase)) { EasingFunction = Theme.EaseOut });
+        ShowText();
+        CloseAfter(ResultTime);
+    }
+
+    /// <summary>A rewrite of the inserted text is being written.</summary>
+    public void ShowRewriting()
+    {
+        if (!IsShowingResult) return;
+        Enter(PillState.Rewriting, "Rewriting", "", Theme.OverlayThink);
+        Animate(Words, OpacityProperty, 0.45, Theme.DurBase, Theme.EaseOut);
+    }
+
+    public enum Note { Done, Info, Error }
+
+    /// <summary>
+    /// A short word on the inserted-text card: done ("Copied", in the text-landed colour), info (a hint in ink) or an
+    /// error. The card then closes after <paramref name="seconds"/>.
+    /// </summary>
+    public void NoteOnResult(string text, Note kind, double seconds = 3)
+    {
+        if (!IsShowingResult) return;
+        bool error = kind == Note.Error;
+        if (_state == PillState.Rewriting) Enter(PillState.Result, "", "", Theme.OverlayScript);
+        Animate(Words, OpacityProperty, 1, Theme.DurBase, Theme.EaseOut);
+        StatusRun.Text = text;
+        ContextRun.Text = "";
+        StatusRun.Foreground = new SolidColorBrush(kind switch { Note.Error => Theme.OverlayDanger, Note.Info => Theme.OverlayInk, _ => Theme.OverlayScript });
+        if (error)
+        {
+            AnimateColor(_glowBrush, Theme.OverlayDanger);
+            AnimateColor(_edgeBrush, Theme.OverlayDanger);
+            Shake();
+        }
+        CloseAfter(TimeSpan.FromSeconds(seconds));
     }
 
     /// <summary>A short message. Errors shake once and stay four seconds; other notes leave sooner.</summary>
@@ -125,6 +246,7 @@ public partial class OverlayWindow : Window
     {
         if (text.Length > 70) text = text[..69] + "…";
         Enter(error ? PillState.Error : PillState.Info, text, "", error ? Theme.OverlayDanger : Theme.OverlayMuted);
+        ClearText();
         ReturnAfter(TimeSpan.FromSeconds(error ? Math.Max(seconds, 4) : seconds));
     }
 
@@ -156,12 +278,160 @@ public partial class OverlayWindow : Window
         Animate(Glow, OpacityProperty, 0.18 + _level * 0.55, Theme.DurInstant, null);
     }
 
+    // ---------- text above the status line ----------
+
+    private double TextWidth => TextCardWidth - Pill.BorderThickness.Left - Pill.BorderThickness.Right - 22 - 14 - TextHost.Padding.Right;
+
+    /// <summary>Opens (or resizes) the text area to fit the words, growing the card upwards.</summary>
+    private void ShowText()
+    {
+        _hasText = true;
+        _collapsing = false;
+        Pill.BeginAnimation(PaddingProperty, null);
+        UpdatePadding();
+        SizeCard();
+        Words.Height = double.NaN;
+        Words.Measure(new Size(TextWidth, double.PositiveInfinity));
+        double words = Math.Ceiling(Words.DesiredSize.Height);
+        // Its own height, so the text is laid out in full at once and the growing area only uncovers it
+        // (otherwise the last line would be trimmed while the card grows).
+        Words.Height = words;
+        double height = TextHost.Padding.Top + words;
+        Animate(TextHost, HeightProperty, height, Theme.DurExpand, Theme.EaseOut);
+    }
+
+    private void ClearText()
+    {
+        _liveWords = [];
+        if (!_hasText) return;
+        _hasText = false;
+        _collapsing = true;
+        Animate(Words, OpacityProperty, 0, Theme.DurQuick, Theme.EaseIn);
+        // The words fold away first; then the card narrows to its status line.
+        var fold = new DoubleAnimation(0, new Duration(Theme.MotionEnabled ? Theme.DurExpand : TimeSpan.Zero)) { EasingFunction = Theme.EaseOut };
+        fold.Completed += (_, _) =>
+        {
+            _collapsing = false;
+            if (_hasText) return; // new words arrived meanwhile
+            Words.Inlines.Clear();
+            Words.Height = double.NaN;
+            UpdatePadding();
+            SizeCard();
+        };
+        TextHost.BeginAnimation(HeightProperty, fold);
+    }
+
+    private bool _collapsing;
+
+    /// <summary>The first word to show so the text, plus its caret, fits in <paramref name="lines"/> lines.</summary>
+    private int FirstShownWord(string[] words, int lines)
+    {
+        var typeface = new Typeface(Words.FontFamily, Words.FontStyle, FontWeights.Normal, Words.FontStretch);
+        double dip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        // Two lines never hold more than about thirty words, so there is no need to try the oldest ones.
+        for (int first = Math.Max(0, words.Length - 48); first < words.Length - 1; first++)
+        {
+            string candidate = (first > 0 ? "…" : "") + string.Join(' ', words[first..]) + " |";
+            var formatted = new FormattedText(candidate, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, typeface, Words.FontSize, Brushes.White, dip)
+            {
+                MaxTextWidth = TextWidth, LineHeight = LineHeight
+            };
+            if (formatted.Height <= lines * LineHeight + 0.5) return first;
+        }
+        return words.Length - 1;
+    }
+
+    /// <summary>Words compared without case or punctuation, so "it." and "it," are the same word.</summary>
+    private static string Norm(string word) => word.Trim('.', ',', '!', '?', ';', ':', '"', '…').ToLowerInvariant();
+
+    /// <summary>A fixed width while there is text (so wrapping never jumps); otherwise as wide as the status line.</summary>
+    private void SizeCard()
+    {
+        double current = Pill.ActualWidth;
+        if (_hasText)
+        {
+            if (Pill.Width == TextCardWidth) return;
+            Pill.BeginAnimation(WidthProperty, null);
+            Pill.Width = TextCardWidth;
+            if (Theme.MotionEnabled && current > 0 && IsVisible && _state is not (PillState.Hidden or PillState.Rest))
+                Pill.BeginAnimation(WidthProperty, new DoubleAnimation(current, TextCardWidth, new Duration(Theme.DurExpand)) { EasingFunction = Theme.EaseOut });
+            return;
+        }
+        if (double.IsNaN(Pill.Width) || _collapsing) return;
+        // Back to the natural width of the status line: measure it, then ease there and let go.
+        Pill.BeginAnimation(WidthProperty, null);
+        Pill.Width = double.NaN;
+        Pill.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        double natural = Pill.DesiredSize.Width;
+        if (!Theme.MotionEnabled || current <= 0 || !IsVisible) return;
+        Pill.BeginAnimation(WidthProperty, new DoubleAnimation(current, natural, new Duration(Theme.DurExpand))
+        {
+            EasingFunction = Theme.EaseOut, FillBehavior = FillBehavior.Stop
+        });
+    }
+
+    /// <summary>Once hidden, everything goes back to its starting size so the next card rises clean.</summary>
+    private void ResetLayout()
+    {
+        _hasText = false;
+        _collapsing = false;
+        _liveWords = [];
+        Pill.BeginAnimation(WidthProperty, null);
+        Pill.Width = double.NaN;
+        TextHost.BeginAnimation(HeightProperty, null);
+        TextHost.Height = 0;
+        Words.Inlines.Clear();
+        FoldMeter(false, animate: false);
+    }
+
+    // ---------- closing the inserted-text card ----------
+
+    private void CloseAfter(TimeSpan delay)
+    {
+        _closeLeft = delay;
+        _closesAt = DateTime.UtcNow + delay;
+        CountdownScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        CountdownScale.ScaleX = 1;
+        Countdown.Opacity = 0.7;
+        if (PillHost.IsMouseOver) { PauseClose(); return; }
+        ReturnAfter(delay);
+        RunCountdown(delay);
+    }
+
+    private void PauseClose()
+    {
+        if (_state != PillState.Result || !_returnTimer.IsEnabled) return;
+        _returnTimer.Stop();
+        _closeLeft = _closesAt - DateTime.UtcNow;
+        double scale = CountdownScale.ScaleX;
+        CountdownScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        CountdownScale.ScaleX = scale;
+    }
+
+    private void ResumeClose()
+    {
+        if (_state != PillState.Result || _returnTimer.IsEnabled) return;
+        // Leaving the card always gives a moment to read before it closes.
+        var left = _closeLeft < TimeSpan.FromSeconds(1.5) ? TimeSpan.FromSeconds(1.5) : _closeLeft;
+        _closesAt = DateTime.UtcNow + left;
+        ReturnAfter(left);
+        RunCountdown(left);
+    }
+
+    /// <summary>A hairline along the bottom of the card that runs out when the card closes.</summary>
+    private void RunCountdown(TimeSpan left)
+    {
+        if (!Theme.MotionEnabled) return; // without motion the line stays full and still marks the card as timed
+        CountdownScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(CountdownScale.ScaleX, 0, new Duration(left)));
+    }
+
     // ---------- state changes ----------
 
     /// <summary>Taller in the middle, like a voice print.</summary>
     private static double Envelope(int i) => 0.45 + 0.55 * Math.Sin(Math.PI * (i + 0.5) / BarCount);
     /// <summary>Older sound, further left, is dimmer: the voice flows into the caret.</summary>
     private static double Fade(int i) => 0.25 + 0.75 * (i + 1) / BarCount;
+    private static Thickness BarMargin(int i) => new(0, 0, i == BarCount - 1 ? 0 : 2, 0);
 
     private static string Pretty(string process) =>
         string.IsNullOrEmpty(process) || process == "unknown" ? "this app" : char.ToUpper(process[0]) + process[1..];
@@ -186,6 +456,7 @@ public partial class OverlayWindow : Window
         _level = 0;
         Array.Clear(_history);
         StopLoops();
+        Countdown.Opacity = 0;
 
         if (!_restVisible)
         {
@@ -202,8 +473,10 @@ public partial class OverlayWindow : Window
         // Optional resting nub (Settings > Show the pill when idle).
         _state = PillState.Rest;
         if (!IsVisible) Present();
-        SetChrome(text: false, timer: false, finish: false, cancel: false);
-        Animate(Pill, HeightProperty, 24, Theme.DurExpand, Theme.EaseOut);
+        ClearText();
+        FoldMeter(false, animate: true);
+        SetChrome(text: false, timer: false, finish: false, cancel: false, actions: false);
+        Animate(MainRow, HeightProperty, 24, Theme.DurExpand, Theme.EaseOut);
         AnimatePadding(new Thickness(12, 0, 12, 0));
         Animate(MeterScale, ScaleTransform.ScaleXProperty, 0.5, Theme.DurExpand, Theme.EaseOut);
         Animate(MeterScale, ScaleTransform.ScaleYProperty, 0.5, Theme.DurExpand, Theme.EaseOut);
@@ -215,50 +488,62 @@ public partial class OverlayWindow : Window
             Animate(_bars[i], OpacityProperty, Fade(i), Theme.DurBase, Theme.EaseOut);
             Animate(_bars[i], HeightProperty, 4 + 14 * Envelope(i), Theme.DurBase, Theme.EaseOut);
         }
+        Animate(_caret, OpacityProperty, 1, Theme.DurBase, Theme.EaseOut);
         Animate(Tick, OpacityProperty, 0, Theme.DurQuick, Theme.EaseIn);
         AnimateColor(_barBrush, Theme.OverlayInk);
         AnimateColor(_glowBrush, Theme.OverlayVoice);
         AnimateColor(_edgeBrush, Theme.OverlayLine);
     }
 
-    private void SetChrome(bool text, bool timer, bool finish, bool cancel)
+    private void SetChrome(bool text, bool timer, bool finish, bool cancel, bool actions)
     {
         Label.Visibility = text ? Visibility.Visible : Visibility.Collapsed;
         Timer.Visibility = timer ? Visibility.Visible : Visibility.Collapsed;
         FinishGroup.Visibility = finish ? Visibility.Visible : Visibility.Collapsed;
         CancelGroup.Visibility = cancel ? Visibility.Visible : Visibility.Collapsed;
         Buttons.Visibility = finish || cancel ? Visibility.Visible : Visibility.Collapsed;
-        Pill.Padding = new Thickness(22, 0, finish || cancel ? 14 : 24, 0);
+        Actions.Visibility = actions ? Visibility.Visible : Visibility.Collapsed;
+        _keycapsShown = finish || cancel || actions;
+        UpdatePadding();
     }
+
+    private bool _keycapsShown;
+
+    /// <summary>Keycaps sit closer to the edge than text does. With words on the card the inset never changes, so they never re-wrap.</summary>
+    private void UpdatePadding() => Pill.Padding = new Thickness(22, 0, _keycapsShown || _hasText ? 14 : 24, 0);
 
     private void Enter(PillState state, string status, string context, Color colour)
     {
         _returnTimer.Stop();
         _hideTimer.Stop();
         bool fromSmall = _state is PillState.Hidden or PillState.Rest;
-        bool same = _state == state;
+        bool same = _state == state && state != PillState.Result;
         _state = state;
 
         if (!IsVisible) Present();
         else KeepOnTop();
 
         bool live = IsLive;
+        bool result = state is PillState.Result or PillState.Rewriting;
         // While holding the hotkey, releasing it inserts; hands-free and command mode show the key that finishes.
-        SetChrome(text: true, timer: live, finish: state is PillState.HandsFree or PillState.Command, cancel: live);
+        SetChrome(text: true, timer: live, finish: state is PillState.HandsFree or PillState.Command, cancel: live, actions: result);
         if (live) { UpdateClock(); _clock.Start(); } else _clock.Stop();
+        Actions.IsHitTestVisible = state == PillState.Result;
+        Animate(Actions, OpacityProperty, state == PillState.Rewriting ? 0.4 : 1, Theme.DurQuick, Theme.EaseOut);
+        if (state != PillState.Result) Countdown.Opacity = 0;
 
         StatusRun.Text = status;
         ContextRun.Text = context;
         StatusRun.Foreground = new SolidColorBrush(state switch
         {
-            PillState.Done => Theme.OverlayScript,
+            PillState.Result => Theme.OverlayScript,
             PillState.Error => Theme.OverlayDanger,
             _ => Theme.OverlayInk
         });
 
         // The card rises with one small overshoot; nothing else in it overshoots.
         Pill.BeginAnimation(PaddingProperty, null);
-        Animate(Pill, HeightProperty, 56, Theme.DurExpand, fromSmall ? Theme.EaseSpring : Theme.EaseOut);
+        Animate(MainRow, HeightProperty, 56, Theme.DurExpand, fromSmall ? Theme.EaseSpring : Theme.EaseOut);
         Animate(MeterScale, ScaleTransform.ScaleXProperty, 1, Theme.DurExpand, Theme.EaseOut);
         Animate(MeterScale, ScaleTransform.ScaleYProperty, 1, Theme.DurExpand, Theme.EaseOut);
         Animate(PillHost, OpacityProperty, 1, Theme.DurBase, Theme.EaseOut);
@@ -269,10 +554,11 @@ public partial class OverlayWindow : Window
         AnimateColor(_glowBrush, colour);
         AnimateColor(_edgeBrush, state switch
         {
-            PillState.Done => Theme.OverlayScript,
+            PillState.Result => Theme.OverlayScript,
             PillState.Error => Theme.OverlayDanger,
             _ => Theme.OverlayLine
         });
+        SizeCard();
 
         if (same) return; // e.g. download progress text updating: keep the loops running
         StopLoops();
@@ -281,11 +567,13 @@ public partial class OverlayWindow : Window
         {
             case PillState.Listening or PillState.HandsFree or PillState.Command:
                 Array.Clear(_history);
+                FoldMeter(false, animate: true);
                 for (int i = 0; i < BarCount; i++)
                 {
                     Animate(_bars[i], OpacityProperty, Fade(i), Theme.DurQuick, Theme.EaseOut);
                     Animate(_bars[i], HeightProperty, Theme.MotionEnabled ? 4 : 4 + 12 * Envelope(i), Theme.DurBase, Theme.EaseOut);
                 }
+                Animate(_caret, OpacityProperty, 1, Theme.DurQuick, Theme.EaseOut);
                 Animate(Tick, OpacityProperty, 0, Theme.DurQuick, Theme.EaseIn);
                 Animate(Glow, OpacityProperty, 0.18, Theme.DurBase, Theme.EaseOut);
                 if (Theme.MotionEnabled)
@@ -298,6 +586,7 @@ public partial class OverlayWindow : Window
 
             case PillState.Writing:
                 // The bars settle into dots and a wave runs through them.
+                FoldMeter(false, animate: true);
                 Dots();
                 Animate(Glow, OpacityProperty, 0.3, Theme.DurBase, Theme.EaseOut);
                 if (Theme.MotionEnabled)
@@ -314,25 +603,21 @@ public partial class OverlayWindow : Window
                         wave.KeyFrames.Add(new EasingDoubleKeyFrame(0, KeyTime.FromPercent(1)));
                         _wave[i].BeginAnimation(TranslateTransform.YProperty, wave);
                     }
-                if (Theme.MotionEnabled)
-                {
-                    var blink = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(1), RepeatBehavior = RepeatBehavior.Forever };
-                    blink.KeyFrames.Add(new DiscreteDoubleKeyFrame(1, KeyTime.FromPercent(0)));
-                    blink.KeyFrames.Add(new DiscreteDoubleKeyFrame(0, KeyTime.FromPercent(0.5)));
-                    _caret.BeginAnimation(OpacityProperty, blink);
-                }
+                Blink();
                 break;
 
             case PillState.Info:
+                FoldMeter(false, animate: true);
                 Dots();
+                Animate(_caret, OpacityProperty, 1, Theme.DurQuick, Theme.EaseOut);
                 Animate(Glow, OpacityProperty, 0, Theme.DurBase, Theme.EaseOut);
                 break;
 
-            case PillState.Done:
-                // Bars leave and a tick is drawn in their place.
-                foreach (var bar in _bars) Animate(bar, OpacityProperty, 0, Theme.DurBase, Theme.EaseOut);
+            case PillState.Result:
+                // The waveform folds into the caret, and the caret is redrawn as a tick.
+                FoldMeter(true, animate: true);
                 Animate(_caret, OpacityProperty, 0, Theme.DurBase, Theme.EaseOut);
-                Animate(Glow, OpacityProperty, 0.45, Theme.DurBase, Theme.EaseOut);
+                Animate(Glow, OpacityProperty, 0.4, Theme.DurBase, Theme.EaseOut);
                 Animate(Tick, OpacityProperty, 1, Theme.DurQuick, Theme.EaseOut);
                 if (Theme.MotionEnabled)
                     Tick.BeginAnimation(Shape.StrokeDashOffsetProperty, new DoubleAnimation(8, 0, new Duration(Theme.DurBase))
@@ -342,40 +627,85 @@ public partial class OverlayWindow : Window
                 else Tick.StrokeDashOffset = 0;
                 break;
 
+            case PillState.Rewriting:
+                // The tick goes back to being a caret, blinking while the new text is written.
+                FoldMeter(true, animate: true);
+                Animate(Tick, OpacityProperty, 0, Theme.DurQuick, Theme.EaseIn);
+                Animate(_caret, OpacityProperty, 1, Theme.DurQuick, Theme.EaseOut);
+                Animate(Glow, OpacityProperty, 0.3, Theme.DurBase, Theme.EaseOut);
+                Blink();
+                break;
+
             case PillState.Error:
+                FoldMeter(false, animate: true);
                 Dots();
+                Animate(_caret, OpacityProperty, 1, Theme.DurQuick, Theme.EaseOut);
                 Animate(Glow, OpacityProperty, 0.4, Theme.DurBase, Theme.EaseOut);
-                if (Theme.MotionEnabled)
-                {
-                    var shake = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromMilliseconds(320) };
-                    double[] offsets = [0, -6, 6, -4, 4, 0];
-                    for (int i = 0; i < offsets.Length; i++)
-                        shake.KeyFrames.Add(new EasingDoubleKeyFrame(offsets[i], KeyTime.FromPercent(i / 5.0), Theme.EaseOut));
-                    Lift.BeginAnimation(TranslateTransform.XProperty, shake);
-                }
+                Shake();
                 break;
         }
     }
 
+    /// <summary>Folds the sound bars away into the caret (after inserting) or opens them out again.</summary>
+    private void FoldMeter(bool fold, bool animate)
+    {
+        if (_meterFolded == fold && animate) return;
+        _meterFolded = fold;
+        var duration = animate && Theme.MotionEnabled ? Theme.DurExpand : TimeSpan.Zero;
+        for (int i = 0; i < BarCount; i++)
+        {
+            _bars[i].BeginAnimation(WidthProperty, new DoubleAnimation(fold ? 0 : 3, new Duration(duration)) { EasingFunction = Theme.EaseOut });
+            _bars[i].BeginAnimation(MarginProperty, new ThicknessAnimation(fold ? new Thickness(0) : BarMargin(i), new Duration(duration)) { EasingFunction = Theme.EaseOut });
+            if (fold) Animate(_bars[i], OpacityProperty, 0, animate ? Theme.DurBase : TimeSpan.Zero, Theme.EaseOut);
+        }
+        _caret.BeginAnimation(MarginProperty, new ThicknessAnimation(new Thickness(fold ? 0 : 5, 0, 0, 0), new Duration(duration)) { EasingFunction = Theme.EaseOut });
+        // Folded, the tick sits where the caret was.
+        Tick.HorizontalAlignment = fold ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        Tick.Margin = fold ? new Thickness(-4, 0, 0, 0) : new Thickness(0);
+    }
+
     private void Dots()
     {
-        foreach (var bar in _bars)
+        for (int i = 0; i < BarCount; i++)
         {
-            Animate(bar, OpacityProperty, Fade(Array.IndexOf(_bars, bar)), Theme.DurQuick, Theme.EaseOut);
-            Animate(bar, HeightProperty, 3, Theme.DurBase, Theme.EaseOut);
+            Animate(_bars[i], OpacityProperty, Fade(i), Theme.DurQuick, Theme.EaseOut);
+            Animate(_bars[i], HeightProperty, 3, Theme.DurBase, Theme.EaseOut);
         }
         Animate(Tick, OpacityProperty, 0, Theme.DurQuick, Theme.EaseIn);
+    }
+
+    /// <summary>The caret blinks once a second, like a text cursor, while text is being written.</summary>
+    private void Blink()
+    {
+        if (!Theme.MotionEnabled) return;
+        var blink = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(1), RepeatBehavior = RepeatBehavior.Forever };
+        blink.KeyFrames.Add(new DiscreteDoubleKeyFrame(1, KeyTime.FromPercent(0)));
+        blink.KeyFrames.Add(new DiscreteDoubleKeyFrame(0, KeyTime.FromPercent(0.5)));
+        _caret.BeginAnimation(OpacityProperty, blink);
+    }
+
+    private void Shake()
+    {
+        if (!Theme.MotionEnabled) return;
+        var shake = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromMilliseconds(320) };
+        double[] offsets = [0, -6, 6, -4, 4, 0];
+        for (int i = 0; i < offsets.Length; i++)
+            shake.KeyFrames.Add(new EasingDoubleKeyFrame(offsets[i], KeyTime.FromPercent(i / 5.0), Theme.EaseOut));
+        Lift.BeginAnimation(TranslateTransform.XProperty, shake);
     }
 
     /// <summary>Ends every repeating animation (the wave, the tick, the shake) so states never fight.</summary>
     private void StopLoops()
     {
         foreach (var wave in _wave) wave.BeginAnimation(TranslateTransform.YProperty, null);
+        double caret = _caret.Opacity;
         _caret.BeginAnimation(OpacityProperty, null);
-        _caret.Opacity = 1;
+        _caret.Opacity = caret;
         Tick.BeginAnimation(Shape.StrokeDashOffsetProperty, null);
         Tick.StrokeDashOffset = 8;
         Lift.BeginAnimation(TranslateTransform.XProperty, null);
+        CountdownScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        CountdownScale.ScaleX = 1;
     }
 
     // ---------- window placement ----------

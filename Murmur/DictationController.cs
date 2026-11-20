@@ -30,6 +30,20 @@ public sealed class DictationController
     private HotkeyKind _mode;
     private DateTime _downAt;
     private bool _ignoreNextUp;
+    private LivePreview? _preview;
+
+    /// <summary>The text the card's keycaps act on: what was just inserted, and where.</summary>
+    private sealed class Insertion
+    {
+        public string Text = "";
+        public string Typed = "";   // as pasted, with the trailing space
+        public IntPtr Window;
+        public string App = "";
+        public bool Busy;
+    }
+
+    private Insertion? _last;
+    private CancellationTokenSource? _rewriteCts;
 
     public bool IsRecording => _state is State.Holding or State.TapPending or State.HandsFree;
     public Transcriber Transcriber => _transcriber;
@@ -64,16 +78,22 @@ public sealed class DictationController
         hotkeys.Down += OnDown;
         hotkeys.Up += OnUp;
         hotkeys.Interrupted += () => { if (_state is State.Holding) Cancel(silent: true); };
-        hotkeys.Escape += () => { if (IsRecording) Cancel(silent: false); };
-        hotkeys.ShouldSwallowEscape = () => IsRecording;
+        hotkeys.Escape += () =>
+        {
+            if (IsRecording) Cancel(silent: false);
+            else if (_overlay.IsShowingResult) Dismiss();
+        };
+        // Esc belongs to Murmur while recording and while the inserted text is on the card (it closes the card).
+        hotkeys.ShouldSwallowEscape = () => IsRecording || _overlay.IsShowingResult;
 
         // The card's own buttons: stop finishes and inserts, close cancels (or dismisses a message).
         overlay.StopRequested += () => { if (IsRecording) _ = StopAndProcessAsync(); };
         overlay.CancelRequested += () =>
         {
             if (IsRecording) Cancel(silent: false);
-            else if (_state == State.Idle) _overlay.HideNow();
+            else if (_state == State.Idle) Dismiss();
         };
+        overlay.ActionRequested += action => _ = OnCardActionAsync(action);
     }
 
     /// <summary>Called at startup and when the model setting changes: download + load in the background.</summary>
@@ -161,10 +181,14 @@ public sealed class DictationController
     {
         try
         {
+            // A new dictation replaces whatever the card held; a rewrite still waiting must not paste over it.
+            _rewriteCts?.Cancel();
+            _last = null;
             _recorder.Start(_settings.Microphone);
             _maxTimer.Start();
             _overlay.ShowRecording(_mode, false);
             if (_settings.Sounds) Sounds.Start();
+            StartPreview();
             return true;
         }
         catch (Exception ex)
@@ -180,6 +204,7 @@ public sealed class DictationController
         _tapTimer.Stop();
         _maxTimer.Stop();
         _recorder.Stop();
+        StopPreview();
         _state = State.Idle;
         // Cancelling fades the pill back to rest with no label; Esc also gets the cancel tone.
         _overlay.HideNow();
@@ -194,6 +219,8 @@ public sealed class DictationController
         _state = State.Processing;
         var mode = _mode;
         var samples = _recorder.Stop();
+        // A preview still running is abandoned: whisper stops at its next step and the final pass takes the card.
+        var preview = StopPreview();
         if (_settings.Sounds) Sounds.Stop();
 
         try
@@ -212,7 +239,7 @@ public sealed class DictationController
             string selection = mode == HotkeyKind.Command && !context.IsTerminal ? await TextInjector.CopySelectionAsync() : "";
 
             AudioRecorder.Normalize(samples);
-            var transcript = await _transcriber.TranscribeAsync(samples, _processor.VocabularyPrompt());
+            var transcript = await _transcriber.TranscribeAsync(samples, _processor.VocabularyPrompt(), previews: preview?.Session);
             // A model that failed at startup may have loaded now; keep the Home tag truthful.
             if (_settings.Engine == SttEngine.Local && Model != ModelState.Ready) SetModel(ModelState.Ready);
             string raw = TextProcessor.StripArtifacts(transcript.Text);
@@ -244,10 +271,14 @@ public sealed class DictationController
                 Words = HistoryStore.CountWords(text)
             });
             var pasteWatch = System.Diagnostics.Stopwatch.StartNew();
+            var target = Native.GetForegroundWindow();
             await TextInjector.PasteAsync(toInsert, _settings.RestoreClipboard);
-            _overlay.ShowDone(HistoryStore.CountWords(text));
+            _last = new Insertion { Text = text, Typed = toInsert, Window = target, App = context.Process };
+            _overlay.ShowResult(text, context.Process, _processor.CanRewrite);
             // One line per dictation, so a slow one can be traced to its cause.
-            Log.Write($"Dictation {seconds:0.0}s audio, total {totalWatch.ElapsedMilliseconds}ms: {_transcriber.LastTiming} paste={pasteWatch.ElapsedMilliseconds}ms");
+            string live = preview == null ? "live=off" :
+                $"live={preview.Count} previews on {_transcriber.PreviewModel} avg {(preview.Count == 0 ? 0 : preview.TotalMs / preview.Count):0}ms max {preview.MaxMs:0}ms, final waited {_transcriber.LastQueueMs:0}ms";
+            Log.Write($"Dictation {seconds:0.0}s audio, total {totalWatch.ElapsedMilliseconds}ms: {_transcriber.LastTiming} paste={pasteWatch.ElapsedMilliseconds}ms {live}");
         }
         catch (Exception ex)
         {
@@ -258,5 +289,340 @@ public sealed class DictationController
         {
             _state = State.Idle;
         }
+    }
+
+    // ---------- live text ----------
+
+    private void StartPreview()
+    {
+        // Only with the on-device model already loaded: the cloud engine gets no live text.
+        if (!_settings.ShowLiveText || !_transcriber.CanPreview) return;
+        _preview = new LivePreview(_transcriber,
+            max => (_recorder.Peek(max, out int heard), heard),
+            text => { if (IsRecording) _overlay.ShowLiveText(text); },
+            _processor.VocabularyPrompt());
+        _preview.Start();
+    }
+
+    private LivePreview? StopPreview()
+    {
+        var preview = _preview;
+        _preview = null;
+        preview?.Stop();
+        return preview;
+    }
+
+    // ---------- the inserted-text card ----------
+
+    private void Dismiss()
+    {
+        _rewriteCts?.Cancel();
+        _last = null;
+        _overlay.HideNow();
+    }
+
+    private async Task OnCardActionAsync(string action)
+    {
+        var last = _last;
+        if (action == "close" || last == null) { Dismiss(); return; }
+        if (last.Busy || _state != State.Idle) return;
+
+        switch (action)
+        {
+            case "copy":
+                bool copied = TextInjector.TrySetText(last.Text);
+                _overlay.NoteOnResult(copied ? "Copied" : "Clipboard is busy. Try again.", copied ? OverlayWindow.Note.Done : OverlayWindow.Note.Error, seconds: copied ? 1.2 : 3);
+                break;
+
+            case "undo":
+                if (!await IsBackInTargetAsync(last)) return;
+                // One Ctrl+Z takes a paste back out in most apps.
+                Native.SendChord(Native.VK_CONTROL, (ushort)'Z');
+                _last = null;
+                _overlay.HideNow();
+                break;
+
+            case "shorter" or "formal" or "casual":
+                await RewriteAsync(last, action);
+                break;
+        }
+    }
+
+    /// <summary>Ctrl+Z and paste go to the focused app, so they only make sense while that is still the app the text went into.</summary>
+    private async Task<bool> IsBackInTargetAsync(Insertion last)
+    {
+        if (Native.GetForegroundWindow() != last.Window)
+        {
+            _overlay.NoteOnResult($"Click into {Pretty(last.App)} first", OverlayWindow.Note.Info, seconds: 4);
+            return false;
+        }
+        return await TextInjector.WaitForModifiersReleasedAsync();
+    }
+
+    private async Task RewriteAsync(Insertion last, string how)
+    {
+        _rewriteCts?.Cancel();
+        var cts = _rewriteCts = new CancellationTokenSource();
+        last.Busy = true;
+        _overlay.ShowRewriting();
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            string text = await _processor.RewriteAsync(last.Text, how, cts.Token);
+            if (cts.IsCancellationRequested || _last != last) return;
+            if (!await IsBackInTargetAsync(last)) return;
+
+            string typed = last.Typed.EndsWith(' ') && !text.EndsWith('\n') ? text + " " : text;
+            _history.Add(new HistoryEntry
+            {
+                Time = DateTime.Now,
+                Text = text,
+                Raw = last.Text,
+                App = last.App,
+                Mode = "Rewrite",
+                Words = HistoryStore.CountWords(text)
+            });
+            // Take the inserted text back out, then paste the new one in its place.
+            Native.SendChord(Native.VK_CONTROL, (ushort)'Z');
+            await Task.Delay(60);
+            await TextInjector.PasteAsync(typed, _settings.RestoreClipboard);
+            last.Text = text;
+            last.Typed = typed;
+            _overlay.ShowResult(text, last.App, _processor.CanRewrite, how switch
+            {
+                "shorter" => "Made shorter",
+                "formal" => "Made formal",
+                _ => "Made casual"
+            });
+            Log.Write($"Rewrite {how}: {watch.ElapsedMilliseconds}ms, {HistoryStore.CountWords(text)} words");
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            Log.Write("Rewrite failed: " + ex.Message);
+            if (_last == last) _overlay.NoteOnResult("Rewrite failed", OverlayWindow.Note.Error, seconds: 4);
+        }
+        finally { last.Busy = false; }
+    }
+
+    private static string Pretty(string process) =>
+        string.IsNullOrEmpty(process) || process == "unknown" ? "the app" : char.ToUpper(process[0]) + process[1..];
+}
+
+/// <summary>
+/// The live text: while recording, about every 1.2 s the newest audio goes through the loaded speech model so the
+/// card can show the words so far. One preview at a time, never more than about half the graphics card's time;
+/// stopping abandons the one in flight so the final transcription is not kept waiting.
+/// </summary>
+public sealed class LivePreview
+{
+    private const int MinAudio = AudioRecorder.SampleRate;        // nothing for the first second
+    private const int Window = AudioRecorder.SampleRate * 9;      // the newest 9 s keep the encoder at its smallest window
+    private const double IntervalMs = 1200;
+
+    private readonly Transcriber _transcriber;
+    private readonly Func<int, (float[] Tail, int Heard)> _source;
+    private readonly Action<string> _show;
+    private readonly string _prompt;
+    private readonly CancellationTokenSource _cts = new();
+    /// <summary>The language the previews chose; the final pass reuses it when it heard enough.</summary>
+    public Transcriber.PreviewSession Session { get; } = new();
+    private string[] _words = [];
+
+    public int Count { get; private set; }
+    public double TotalMs { get; private set; }
+    public double MaxMs { get; private set; }
+    /// <summary>Finishes once the loop has stopped and its last preview has let go of the graphics card.</summary>
+    public Task Completion { get; private set; } = Task.CompletedTask;
+    /// <summary>Raised as each preview starts (used by the developer bench to stop mid-preview).</summary>
+    public event Action? PreviewStarted;
+
+    /// <param name="source">Returns the newest audio (at most the given number of samples) and how much has been heard in all.</param>
+    public LivePreview(Transcriber transcriber, Func<int, (float[] Tail, int Heard)> source, Action<string> show, string prompt)
+    {
+        _transcriber = transcriber;
+        _source = source;
+        _show = show;
+        _prompt = prompt;
+    }
+
+    public void Start() => Completion = RunAsync(_cts.Token);
+
+    public void Stop() => _cts.Cancel();
+
+    private async Task RunAsync(CancellationToken ct)
+    {
+        try
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            double next = MinAudio * 1000.0 / AudioRecorder.SampleRate + 100;
+            while (!ct.IsCancellationRequested)
+            {
+                double wait = next - clock.Elapsed.TotalMilliseconds;
+                if (wait > 0) await Task.Delay(TimeSpan.FromMilliseconds(wait), ct);
+                double started = clock.Elapsed.TotalMilliseconds;
+                var (tail, heard) = _source(Window);
+                if (heard < MinAudio || AudioRecorder.Rms(tail) < 0.0015f) { next = started + 300; continue; }
+
+                AudioRecorder.Normalize(tail);
+                PreviewStarted?.Invoke();
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                string text = TextProcessor.StripArtifacts(await _transcriber.PreviewAsync(tail, heard, _prompt, Session, ct));
+                double ms = watch.Elapsed.TotalMilliseconds;
+                Count++;
+                TotalMs += ms;
+                MaxMs = Math.Max(MaxMs, ms);
+
+                if (!ct.IsCancellationRequested && Merge(text, cut: heard > tail.Length) is { Length: > 0 } words) _show(words);
+                // Keep the graphics card at most about half busy, even on a slow one.
+                next = started + Math.Max(IntervalMs, ms * 2);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { Log.Write("Live text stopped: " + ex.Message); }
+    }
+
+    /// <summary>
+    /// The words so far. Once the recording is longer than the window, a preview hears only its newest part and
+    /// may start mid-word, so it is joined onto the earlier words where the two agree.
+    /// </summary>
+    private string Merge(string text, bool cut)
+    {
+        var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0) return string.Join(' ', _words);
+        if (!cut || _words.Length == 0) { _words = words; return text; }
+
+        static string Norm(string w) => w.Trim('.', ',', '!', '?', ';', ':', '"', '…').ToLowerInvariant();
+        int bestAt = -1, bestRun = 0, skip = 0;
+        // The first word of a cut window is often half a word, so try aligning from the second as well.
+        for (int s = 0; s < Math.Min(2, words.Length); s++)
+            for (int at = Math.Max(0, _words.Length - words.Length - 8); at < _words.Length; at++)
+            {
+                int run = 0;
+                while (at + run < _words.Length && s + run < words.Length && Norm(_words[at + run]) == Norm(words[s + run])) run++;
+                if (run > bestRun) { bestRun = run; bestAt = at; skip = s; }
+            }
+        _words = bestRun >= 2 ? [.. _words[..bestAt], .. words[skip..]]
+            : words.Length > 1 ? ["…" + words[1], .. words[2..]] : words;
+        // The card shows two lines at most; older words are not needed.
+        if (_words.Length > 120) _words = ["…" + _words[^100], .. _words[^99..]];
+        return string.Join(' ', _words);
+    }
+
+    /// <summary>
+    /// Developer aid: Murmur.exe --live-bench folder out.txt plays every 16 kHz mono WAV in the folder in real time
+    /// through the live preview and then the final pass, the way a dictation does, and reports how long the final
+    /// waited for a preview to let go. Uses its own settings (Danish and English, the large model if downloaded);
+    /// it never touches the clipboard, history or the user's settings.
+    /// </summary>
+    public static async Task BenchAsync(string folder, string outPath)
+    {
+        var lines = new List<string>();
+        void Flush() => System.IO.File.WriteAllLines(outPath, lines);
+        try
+        {
+            string model = Environment.GetEnvironmentVariable("MURMUR_LIVE_MODEL") is { Length: > 0 } chosen ? chosen
+                : System.IO.File.Exists(LocalModel.Get("large-v3-turbo-q5").Path) ? "large-v3-turbo-q5" : "base";
+            var settings = new AppSettings { Engine = SttEngine.Local, LocalModel = model, Language = "da", SecondLanguage = "en" };
+            var device = new List<string>();
+            using var logger = Whisper.net.Logger.LogProvider.AddLogger((_, message) =>
+            {
+                if (message != null && (message.Contains("ulkan") || message.Contains("backend") || message.Contains("gpu", StringComparison.OrdinalIgnoreCase)))
+                    lock (device) device.Add(message.Trim());
+            });
+            using var transcriber = new Transcriber(settings);
+            var load = System.Diagnostics.Stopwatch.StartNew();
+            await transcriber.EnsureLocalModelAsync();
+            await transcriber.EnsureDetectorAsync();
+            lines.Add($"model {model}, languages da+en, loaded in {load.Elapsed.TotalSeconds:0.0}s; previews run on {transcriber.PreviewModel}");
+
+            if (Environment.GetEnvironmentVariable("MURMUR_LIVE_PROFILE") is { Length: > 0 } clip)
+            {
+                var audio = ReadWav(System.IO.Path.Combine(folder, clip + ".wav"));
+                AudioRecorder.Normalize(audio);
+                lines.AddRange(await transcriber.ProfilePreviewAsync(audio, clip[..2]));
+                lock (device) lines.AddRange(device.Distinct().Take(20).Select(d => "device: " + d));
+                Flush();
+                System.Windows.Application.Current.Shutdown();
+                return;
+            }
+
+            var clips = System.IO.Directory.GetFiles(folder, "*.wav").OrderBy(f => f)
+                .Select(f => (Name: System.IO.Path.GetFileNameWithoutExtension(f), Samples: ReadWav(f))).ToList();
+            // One long recording made of all the Danish clips, to exercise the 9 s window and the joining of words.
+            var gap = new float[AudioRecorder.SampleRate * 2 / 5];
+            clips.Add(("da-all", clips.Where(c => c.Name.StartsWith("da")).SelectMany(c => c.Samples.Concat(gap)).ToArray()));
+
+            var waited = new Dictionary<string, List<double>>();
+            var finals = new Dictionary<string, List<double>>();
+            int[] stopAfter = [20, 80, 160, 260, 380];
+            var modes = (Environment.GetEnvironmentVariable("MURMUR_LIVE_MODES") ?? "off,live,stop-mid-preview").Split(',');
+            foreach (var mode in modes)
+            {
+                waited[mode] = [];
+                finals[mode] = [];
+                int index = 0;
+                foreach (var (name, samples) in clips)
+                {
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
+                    double duration = samples.Length * 1000.0 / AudioRecorder.SampleRate;
+                    int Heard() => Math.Min(samples.Length, (int)(clock.Elapsed.TotalMilliseconds * AudioRecorder.SampleRate / 1000));
+                    var shown = new List<string>();
+                    LivePreview? preview = null;
+                    var started = new TaskCompletionSource();
+                    if (mode != "off")
+                    {
+                        preview = new LivePreview(transcriber, max =>
+                        {
+                            int heard = Heard(), count = Math.Min(max, heard);
+                            return (samples[(heard - count)..heard], heard);
+                        }, text => shown.Add($"{clock.Elapsed.TotalSeconds,5:0.0}s  {text}"), "");
+                        preview.PreviewStarted += () => started.TrySetResult();
+                        preview.Start();
+                    }
+                    int delay = stopAfter[index++ % stopAfter.Length];
+                    if (mode == "stop-mid-preview")
+                    {
+                        // Release the hotkey while a preview is running: the worst moment for the final pass.
+                        await Task.WhenAny(started.Task, Task.Delay(TimeSpan.FromMilliseconds(duration)));
+                        await Task.Delay(delay);
+                    }
+                    else await Task.Delay(TimeSpan.FromMilliseconds(duration));
+
+                    var audio = samples[..Heard()];
+                    var stop = System.Diagnostics.Stopwatch.StartNew();
+                    preview?.Stop();
+                    AudioRecorder.Normalize(audio);
+                    var transcript = await transcriber.TranscribeAsync(audio, "", previews: preview?.Session);
+                    double total = stop.Elapsed.TotalMilliseconds;
+                    if (preview != null) await preview.Completion;
+                    waited[mode].Add(transcriber.LastQueueMs);
+                    finals[mode].Add(total);
+
+                    string live = preview == null ? "" : $"previews {preview.Count} avg {(preview.Count == 0 ? 0 : preview.TotalMs / preview.Count):0}ms max {preview.MaxMs:0}ms | ";
+                    string at = mode == "stop-mid-preview" ? $" stopped {delay}ms into a preview at {audio.Length / 16000.0:0.0}s" : "";
+                    lines.Add($"{mode,-16} {name,-6} {duration / 1000:0.0}s{at}: {live}final waited {transcriber.LastQueueMs:0}ms, release to text {total:0}ms | {transcriber.LastTiming}");
+                    lines.Add($"{"",-16} final  [{transcript.Text}]");
+                    foreach (var line in shown) lines.Add($"{"",-16} live {line}");
+                    Flush();
+                    await Task.Delay(300);
+                }
+            }
+            lines.Add("");
+            foreach (var mode in waited.Keys)
+                lines.Add($"SUMMARY {mode,-16} final waited avg {waited[mode].Average():0}ms max {waited[mode].Max():0}ms; release to text avg {finals[mode].Average():0}ms max {finals[mode].Max():0}ms");
+        }
+        catch (Exception ex) { lines.Add("FAILED " + ex); }
+        Flush();
+        System.Windows.Application.Current.Shutdown();
+    }
+
+    private static float[] ReadWav(string path)
+    {
+        var bytes = System.IO.File.ReadAllBytes(path);
+        int data = bytes.AsSpan().IndexOf("data"u8) + 8;
+        var samples = new float[(bytes.Length - data) / 2];
+        for (int i = 0; i < samples.Length; i++) samples[i] = BitConverter.ToInt16(bytes, data + i * 2) / 32768f;
+        return samples;
     }
 }
