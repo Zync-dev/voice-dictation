@@ -115,6 +115,7 @@ public partial class MainWindow : Window
         DataPathText.Text = "Settings, history and speech models are stored in " + AppSettings.DataDir;
         LoadLearningSettings(); // Learning and context (MainWindow.Learning.cs)
         InitModesSection(); // Modes and voice commands (MainWindow.Modes.cs)
+        LoadHandsFreeSettings(); // Hands-free (MainWindow.HandsFree.cs)
         LoadDeveloperSettings(); // ---- Developer mode (MainWindow.DevMode.cs) ----
 
         _loading = false;

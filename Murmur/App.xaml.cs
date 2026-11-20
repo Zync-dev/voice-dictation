@@ -58,6 +58,7 @@ public partial class App : Application
         if (HandleSetupSwitches(e.Args)) return; // installer, updates and first run: developer switches (App.Setup.cs)
 
         if (LearningTests.TryRun(this, e.Args)) return; // Learning and context: developer checks
+        if (HandsFreeTests.TryRun(this, e.Args)) return; // Hands-free: --routertest, --screentest (HandsFreeTests.cs)
 
         if (e.Args.Length == 3 && e.Args[0] == "--eval")
         {

@@ -9,7 +9,7 @@ public enum ModelState { Loading, Downloading, Ready, Failed, Cloud }
 /// Hold the hotkey to talk (push-to-talk); double-tap it for hands-free; Esc cancels.
 /// Everything here runs on the UI thread.
 /// </summary>
-public sealed class DictationController
+public sealed partial class DictationController
 {
     private enum State { Idle, Holding, TapPending, HandsFree, Processing }
 
@@ -113,6 +113,7 @@ public sealed class DictationController
             else if (_state == State.Idle) Dismiss();
         };
         overlay.ActionRequested += action => _ = OnCardActionAsync(action);
+        InitHandsFree(); // Hands-free: the intent router for command mode (DictationController.HandsFree.cs)
     }
 
     /// <summary>Called at startup and when the model setting changes: download + load in the background.</summary>
@@ -307,6 +308,8 @@ public sealed class DictationController
                 await AnswerAsync(raw, selection, transcript.Language, context, seconds);
                 return;
             }
+            // ---- Hands-free: "svar på mailen", "opsummer det her" ... go to their intent; anything else is command mode as before ----
+            if (mode == HotkeyKind.Command && await TryIntentAsync(raw, selection, transcript.Language, seconds)) return;
 
             string text = mode switch
             {
@@ -433,6 +436,7 @@ public sealed class DictationController
     private async Task OnCardActionAsync(string action)
     {
         if (action.StartsWith("answer-")) { await OnAnswerActionAsync(action); return; }
+        if (action.StartsWith("confirm-")) { _handsFree.OnCardAction(action); return; } // Hands-free
         var last = _last;
         if (action == "close" || last == null) { Dismiss(); return; }
         if (last.Busy || _state != State.Idle) return;

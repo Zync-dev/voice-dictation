@@ -527,6 +527,67 @@
                 </Border>
                 <!-- ==== end Modes and voice commands ==== -->
 
+                <!-- ==== Hands-free (foundation): MainWindow.HandsFree.cs ==== -->
+                <TextBlock x:Name="HandsFreeHeading" Style="{StaticResource SectionHeading}" Text="Hands-free"/>
+                <Border Style="{StaticResource SettingsCard}">
+                    <StackPanel>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Commands about the window in front"/>
+                                <TextBlock x:Name="HandsFreeHelp" Style="{StaticResource RowHelp}" Text="In command mode, say “svar på mailen og sig ja tak”, “opsummer det her”, “hvad vil de have?” or “lav en to-do-liste”. In English: “reply to this email”, “summarize this”, “what do they want?”. Murmur reads the window only when you ask, and never sends anything for you. Needs AI polish."/>
+                            </StackPanel>
+                            <CheckBox x:Name="HandsFreeIntentsBox" Grid.Column="1" Click="HandsFreeSetting_Changed" AutomationProperties.Name="Commands about the window in front"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Understand free-form requests"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="When no fixed phrase fits, one call to the AI model works out what you asked for. It gets your words and the app name, never what is on screen."/>
+                            </StackPanel>
+                            <CheckBox x:Name="HandsFreeAiRouterBox" Grid.Column="1" Click="HandsFreeSetting_Changed" AutomationProperties.Name="Understand free-form requests"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Open the reply field"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="For “reply to this email”, Murmur presses the app’s own reply shortcut (Outlook and Thunderbird Ctrl + R, Gmail R) and pastes the draft there. Otherwise the draft waits on the card."/>
+                            </StackPanel>
+                            <CheckBox x:Name="ReplyOpensBox" Grid.Column="1" Click="HandsFreeSetting_Changed" AutomationProperties.Name="Open the reply field"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Read text in pictures"/>
+                                <TextBlock x:Name="ScreenOcrHelp" Style="{StaticResource RowHelp}" Text="When a window has too little text, such as a scan or an image, Windows reads the picture on this PC."/>
+                            </StackPanel>
+                            <CheckBox x:Name="ScreenOcrBox" Grid.Column="1" Click="HandsFreeSetting_Changed" AutomationProperties.Name="Read text in pictures"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Let the AI model look at the window"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Last resort when nothing else can read it: a picture of the window goes to the vision model below, at your AI address. Off by default. Groq may not offer a vision model."/>
+                            </StackPanel>
+                            <CheckBox x:Name="ScreenVisionBox" Grid.Column="1" Click="HandsFreeSetting_Changed" AutomationProperties.Name="Let the AI model look at the window"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Vision model"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Empty means none. Check your provider’s current model list."/>
+                            </StackPanel>
+                            <TextBox x:Name="ScreenVisionModelBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="HandsFreeSetting_Changed" AutomationProperties.Name="Vision model"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+                <!-- ==== end Hands-free (foundation) ==== -->
+
                 <!-- Microphone and language -->
                 <TextBlock Style="{StaticResource SectionHeading}" Text="Microphone and language"/>
                 <Border Style="{StaticResource SettingsCard}">

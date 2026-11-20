@@ -192,6 +192,23 @@ public class AppSettings
     public static bool HasSavedSettings => File.Exists(FilePath);
     // ---- end Installer, updates and first run ----
 
+    // ---- Hands-free (foundation): intent router and reading the window ----
+
+    /// <summary>Command mode understands requests about the window in front: "svar på mailen", "opsummer det her", "what do they want?".</summary>
+    public bool HandsFreeIntents { get; set; } = true;
+    /// <summary>When no fixed phrase matches, one AI call decides what a free-form command asks for (it never sees the screen).</summary>
+    public bool HandsFreeAiRouter { get; set; } = true;
+    /// <summary>When the window has too little readable text (a picture, a PDF), read it with Windows' built-in OCR. On this PC only.</summary>
+    public bool ScreenOcr { get; set; } = true;
+    /// <summary>As a last resort, send a picture of the window to <see cref="ScreenVisionModel"/> at the AI address. Off by default.</summary>
+    public bool ScreenVision { get; set; }
+    /// <summary>A vision-capable model at the configured AI address; empty means none.</summary>
+    public string ScreenVisionModel { get; set; } = "";
+    /// <summary>For "reply to this email": press the app's own reply shortcut (Outlook Ctrl+R, Gmail R, ...) before pasting the draft.</summary>
+    public bool ReplyOpensReplyField { get; set; } = true;
+
+    // ---- end Hands-free (foundation) ----
+
     // ---- persistence ----
 
     /// <summary>The real data folder; speech models always live here so test runs do not download them again.</summary>

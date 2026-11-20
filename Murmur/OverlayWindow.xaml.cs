@@ -19,7 +19,7 @@ namespace Murmur;
 /// </summary>
 public partial class OverlayWindow : Window
 {
-    private enum PillState { Hidden, Rest, Listening, HandsFree, Command, Writing, Info, Result, Rewriting, Error, Translate, Ask, Answer }
+    private enum PillState { Hidden, Rest, Listening, HandsFree, Command, Writing, Info, Result, Rewriting, Error, Translate, Ask, Answer, Confirm }
 
     private const int BarCount = 18;
     /// <summary>The card's width while it carries text, so lines wrap the same way from first word to last.</summary>
@@ -60,10 +60,10 @@ public partial class OverlayWindow : Window
     public event Action<string>? ActionRequested;
 
     /// <summary>True while a short message, the inserted text or a rewrite is on screen.</summary>
-    public bool IsShowingMessage => _state is PillState.Info or PillState.Error or PillState.Result or PillState.Rewriting or PillState.Answer;
+    public bool IsShowingMessage => _state is PillState.Info or PillState.Error or PillState.Result or PillState.Rewriting or PillState.Answer or PillState.Confirm;
 
     /// <summary>True while the card holds the inserted text and its keycaps (Esc closes it).</summary>
-    public bool IsShowingResult => _state is PillState.Result or PillState.Rewriting or PillState.Answer;
+    public bool IsShowingResult => _state is PillState.Result or PillState.Rewriting or PillState.Answer or PillState.Confirm;
 
     /// <summary>True while the card holds an answer from Ask, with its Copy / Insert / Esc keycaps.</summary>
     public bool IsShowingAnswer => _state == PillState.Answer;
@@ -100,6 +100,13 @@ public partial class OverlayWindow : Window
                 e.Handled = true;
                 if (_state == PillState.Result && sender is FrameworkElement { Tag: string action }) ActionRequested?.Invoke(action);
                 else if (_state == PillState.Rewriting && sender == DismissKey) ActionRequested?.Invoke("close");
+            };
+        // ---- Hands-free: the confirmation keycaps ----
+        foreach (var key in new[] { ConfirmYesKey, ConfirmNoKey })
+            key.MouseLeftButtonUp += (sender, e) =>
+            {
+                e.Handled = true;
+                if (_state == PillState.Confirm && sender is FrameworkElement { Tag: string action }) ActionRequested?.Invoke(action);
             };
         foreach (var key in new[] { AnswerCopyKey, AnswerInsertKey, AnswerDismissKey })
             key.MouseLeftButtonUp += (sender, e) =>
@@ -237,7 +244,13 @@ public partial class OverlayWindow : Window
     /// The answer to a spoken question, on the card instead of at the cursor. It scrolls when long, stays while the
     /// pointer is on it, and has keycaps to copy it or type it into the app (Insert); Esc closes it.
     /// </summary>
-    public void ShowAnswer(string answer, string question)
+    public void ShowAnswer(string answer, string question) => ShowAnswer(answer, question, "Answer", null);
+
+    /// <summary>
+    /// Hands-free: the same answer panel under another title ("Summary", "Reply draft", "To-do"), with
+    /// <paramref name="context"/> (such as "  from Outlook") instead of the quoted question when given.
+    /// </summary>
+    public void ShowAnswer(string answer, string question, string title, string? context)
     {
         Words.BeginAnimation(OpacityProperty, null);
         Words.Inlines.Clear();
@@ -248,7 +261,7 @@ public partial class OverlayWindow : Window
         _liveWords = [];
         _answering = true;
         string asked = question.Length > 38 ? question[..37].TrimEnd() + "…" : question;
-        Enter(PillState.Answer, "Answer", $"  “{asked}”", Theme.OverlayAsk);
+        Enter(PillState.Answer, title, context ?? (asked.Length > 0 ? $"  “{asked}”" : ""), Theme.OverlayAsk);
         if (Theme.MotionEnabled)
             Words.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, new Duration(Theme.DurBase)) { EasingFunction = Theme.EaseOut });
         ShowText();
@@ -256,6 +269,33 @@ public partial class OverlayWindow : Window
         int words = answer.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
         CloseAfter(TimeSpan.FromSeconds(Math.Clamp(8 + words * 0.35, 10, 60)));
     }
+
+    // ---------- Hands-free: an explicit yes before anything that cannot be taken back ----------
+
+    /// <summary>
+    /// The card asks before Murmur does something that cannot be undone (send, submit, delete): <paramref name="question"/>
+    /// as the status ("Send this reply?"), <paramref name="detail"/> above it (exactly what will happen), a keycap labelled
+    /// <paramref name="verb"/> and Esc. Nothing happens unless the keycap is clicked or the user says yes in command mode.
+    /// It closes (meaning no) after <paramref name="timeout"/>; the pointer on the card holds it.
+    /// </summary>
+    public void ShowConfirm(string question, string detail, string verb, TimeSpan timeout)
+    {
+        Words.BeginAnimation(OpacityProperty, null);
+        Words.Inlines.Clear();
+        Words.Text = detail.Replace("\r", "");
+        Words.Foreground = _inkBrush;
+        Words.MaxHeight = 4 * LineHeight;
+        Words.TextTrimming = TextTrimming.CharacterEllipsis;
+        _liveWords = [];
+        _answering = false;
+        ConfirmYesText.Text = verb;
+        Enter(PillState.Confirm, question, "", Theme.OverlayCommand);
+        ShowText();
+        CloseAfter(timeout);
+    }
+
+    /// <summary>Hands-free: raised when the card changes state (old, new), so a waiting confirmation knows when it was replaced.</summary>
+    public event Action<string, string>? CardStateChanged;
 
     /// <summary>For --modes-demo: scrolls a long answer as the mouse wheel would. Returns how far it can scroll in all.</summary>
     internal double ScrollAnswerBy(double pixels)
@@ -502,7 +542,7 @@ public partial class OverlayWindow : Window
 
     private void PauseClose()
     {
-        if (_state is not (PillState.Result or PillState.Answer) || !_returnTimer.IsEnabled) return;
+        if (_state is not (PillState.Result or PillState.Answer or PillState.Confirm) || !_returnTimer.IsEnabled) return;
         _returnTimer.Stop();
         _closeLeft = _closesAt - DateTime.UtcNow;
         double scale = CountdownScale.ScaleX;
@@ -512,7 +552,7 @@ public partial class OverlayWindow : Window
 
     private void ResumeClose()
     {
-        if (_state is not (PillState.Result or PillState.Answer) || _returnTimer.IsEnabled) return;
+        if (_state is not (PillState.Result or PillState.Answer or PillState.Confirm) || _returnTimer.IsEnabled) return;
         // Leaving the card always gives a moment to read before it closes.
         var left = _closeLeft < TimeSpan.FromSeconds(1.5) ? TimeSpan.FromSeconds(1.5) : _closeLeft;
         _closesAt = DateTime.UtcNow + left;
@@ -560,10 +600,12 @@ public partial class OverlayWindow : Window
         StopLoops();
         Countdown.Opacity = 0;
 
+        var left = _state;
         if (!_restVisible)
         {
             // Gone when not in use: fade and sink, then hide the window.
             _state = PillState.Hidden;
+            if (left != _state) CardStateChanged?.Invoke(left.ToString(), _state.ToString());
             Animate(PillHost, OpacityProperty, 0, Theme.DurQuick, Theme.EaseIn);
             Animate(Lift, TranslateTransform.YProperty, 14, Theme.DurQuick, Theme.EaseIn);
             Animate(Glow, OpacityProperty, 0, Theme.DurQuick, Theme.EaseIn);
@@ -574,6 +616,7 @@ public partial class OverlayWindow : Window
 
         // Optional resting nub (Settings > Show the pill when idle).
         _state = PillState.Rest;
+        if (left != _state) CardStateChanged?.Invoke(left.ToString(), _state.ToString());
         if (!IsVisible) Present();
         ClearText();
         FoldMeter(false, animate: true);
@@ -607,7 +650,9 @@ public partial class OverlayWindow : Window
         Actions.Visibility = actions ? Visibility.Visible : Visibility.Collapsed;
         bool answer = _state == PillState.Answer;
         AnswerActions.Visibility = answer ? Visibility.Visible : Visibility.Collapsed;
-        _keycapsShown = finish || cancel || actions || answer;
+        bool confirm = _state == PillState.Confirm; // Hands-free
+        ConfirmActions.Visibility = confirm ? Visibility.Visible : Visibility.Collapsed;
+        _keycapsShown = finish || cancel || actions || answer || confirm;
         UpdatePadding();
     }
 
@@ -622,7 +667,9 @@ public partial class OverlayWindow : Window
         _hideTimer.Stop();
         bool fromSmall = _state is PillState.Hidden or PillState.Rest;
         bool same = _state == state && state != PillState.Result;
+        var left = _state;
         _state = state;
+        if (left != state) CardStateChanged?.Invoke(left.ToString(), state.ToString()); // Hands-free
 
         if (!IsVisible) Present();
         else KeepOnTop();
@@ -634,7 +681,7 @@ public partial class OverlayWindow : Window
         if (live) { UpdateClock(); _clock.Start(); } else _clock.Stop();
         Actions.IsHitTestVisible = state == PillState.Result;
         Animate(Actions, OpacityProperty, state == PillState.Rewriting ? 0.4 : 1, Theme.DurQuick, Theme.EaseOut);
-        if (state is not (PillState.Result or PillState.Answer)) Countdown.Opacity = 0;
+        if (state is not (PillState.Result or PillState.Answer or PillState.Confirm)) Countdown.Opacity = 0;
 
         StatusRun.Text = status;
         ContextRun.Text = context;
@@ -661,6 +708,7 @@ public partial class OverlayWindow : Window
             PillState.Result => Theme.OverlayScript,
             PillState.Error => Theme.OverlayDanger,
             PillState.Answer => Theme.OverlayAsk,
+            PillState.Confirm => Theme.OverlayCommand,
             _ => Theme.OverlayLine
         });
         SizeCard();
@@ -668,7 +716,7 @@ public partial class OverlayWindow : Window
         if (same) return; // e.g. download progress text updating: keep the loops running
         StopLoops();
         // The answer card has no tick, so the caret sits right next to its label.
-        Tick.Visibility = state == PillState.Answer ? Visibility.Collapsed : Visibility.Visible;
+        Tick.Visibility = state is PillState.Answer or PillState.Confirm ? Visibility.Collapsed : Visibility.Visible;
 
         switch (state)
         {
@@ -734,7 +782,7 @@ public partial class OverlayWindow : Window
                 else Tick.StrokeDashOffset = 0;
                 break;
 
-            case PillState.Answer:
+            case PillState.Answer or PillState.Confirm:
                 // The waveform folds into the caret, which stays lit in the colour of Ask: text to read, not text that landed.
                 FoldMeter(true, animate: true);
                 Animate(Tick, OpacityProperty, 0, Theme.DurQuick, Theme.EaseIn);
