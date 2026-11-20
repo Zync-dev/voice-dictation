@@ -11,8 +11,11 @@ namespace Murmur;
 public partial class App : Application
 {
     // A test run with its own data folder (MURMUR_DATA_DIR) is its own instance, so it can run beside the real app.
-    private static string MutexName => AppSettings.IsTestInstance ? "Murmur.SingleInstance.Test" : "Murmur.SingleInstance";
-    private static string ShowEventName => AppSettings.IsTestInstance ? "Murmur.ShowWindow.Test" : "Murmur.ShowWindow";
+    // Each test data folder is its own instance, so several test runs (and the real app) can run side by side.
+    private static string TestSuffix => ".Test." + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+        System.Text.Encoding.UTF8.GetBytes(AppSettings.DataDir.ToLowerInvariant())))[..16];
+    private static string MutexName => AppSettings.IsTestInstance ? "Murmur.SingleInstance" + TestSuffix : "Murmur.SingleInstance";
+    private static string ShowEventName => AppSettings.IsTestInstance ? "Murmur.ShowWindow" + TestSuffix : "Murmur.ShowWindow";
 
     private Mutex? _mutex;
     private EventWaitHandle? _showEvent;
@@ -24,7 +27,7 @@ public partial class App : Application
     public HotkeyService Hotkeys { get; private set; } = null!;
     public DictationController Controller { get; private set; } = null!;
     public OverlayWindow Overlay { get; private set; } = null!;
-    /// <summary>Developer aid: --page=N opens the window on that page (0 Home .. 4 Settings).</summary>
+    /// <summary>Developer aid: --page=N opens the window on that page (0 Home .. 4 Transcribe, 5 Settings).</summary>
     public int StartPage { get; private set; }
     public ImageSource? AppIcon { get; private set; }
 
@@ -80,6 +83,11 @@ public partial class App : Application
             return;
         }
 
+        // ---- Developer mode and file transcription checks (App.DevTools.cs) ----
+        if (e.Args.Length == 2 && e.Args[0] == "--devtest") { _ = DevTestAsync(e.Args[1]); return; }
+        if (e.Args.Length == 3 && e.Args[0] == "--filetest") { _ = FileTestAsync(e.Args[1], e.Args[2]); return; }
+        if (e.Args.Length == 3 && e.Args[0] == "--devspeech") { _ = DevSpeechAsync(e.Args[1], e.Args[2]); return; }
+
         _mutex = new Mutex(true, MutexName, out bool isFirst);
         if (!isFirst)
         {
@@ -117,6 +125,7 @@ public partial class App : Application
         listener.Start();
 
         if (!e.Args.Contains("--minimized")) ShowMainWindow();
+        ScheduleScreenshot(e.Args); // developer aid: --shot=out.png (App.DevTools.cs)
         _ = Controller.PrepareModelAsync();
     }
 

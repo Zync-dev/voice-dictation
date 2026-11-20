@@ -189,6 +189,7 @@ public sealed class DictationController
             _overlay.ShowRecording(_mode, false);
             if (_settings.Sounds) Sounds.Start();
             StartPreview();
+            ProjectVocabulary.Prefetch(_settings); // developer mode: read the open project while the user talks
             return true;
         }
         catch (Exception ex)
@@ -239,7 +240,7 @@ public sealed class DictationController
             string selection = mode == HotkeyKind.Command && !context.IsTerminal ? await TextInjector.CopySelectionAsync() : "";
 
             AudioRecorder.Normalize(samples);
-            var transcript = await _transcriber.TranscribeAsync(samples, _processor.VocabularyPrompt(), previews: preview?.Session);
+            var transcript = await _transcriber.TranscribeAsync(samples, _processor.VocabularyPrompt(context), previews: preview?.Session);
             // A model that failed at startup may have loaded now; keep the Home tag truthful.
             if (_settings.Engine == SttEngine.Local && Model != ModelState.Ready) SetModel(ModelState.Ready);
             string raw = TextProcessor.StripArtifacts(transcript.Text);

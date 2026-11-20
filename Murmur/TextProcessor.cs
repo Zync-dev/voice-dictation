@@ -37,6 +37,8 @@ public sealed partial class TextProcessor
         // A dictation that is exactly a snippet trigger expands verbatim.
         var whole = MatchWholeSnippet(raw);
         if (whole != null) return whole;
+        // ---- Developer mode: code editors and terminals (TextProcessor.DevMode.cs) ----
+        if (ProcessDeveloperText(raw, context, language) is { } developerText) return developerText;
 
         string style = _settings.StyleFor(context.Process);
         string text;
@@ -53,6 +55,7 @@ public sealed partial class TextProcessor
 
         text = ApplyDictionary(text);
         text = ApplySnippets(text);
+        text = ApplyProjectNames(text, context); // developer mode; a no-op outside code editors
         return text.Trim();
     }
 

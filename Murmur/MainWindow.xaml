@@ -114,6 +114,7 @@
                     <ListBoxItem Content="Dictionary" Tag="&#xE82D;"/>
                     <ListBoxItem Content="Snippets" Tag="&#xE77F;"/>
                     <ListBoxItem Content="Style" Tag="&#xE8D2;"/>
+                    <ListBoxItem Content="Transcribe" Tag="&#xE8D6;"/>
                     <ListBoxItem Content="Settings" Tag="&#xE713;"/>
                 </ListBox>
             </DockPanel>
@@ -426,6 +427,9 @@
             </Border>
         </Grid>
 
+        <!-- ===== Transcribe (TranscribePage.xaml) ===== -->
+        <local:TranscribePage x:Name="PageTranscribe" Grid.Column="1" Visibility="Collapsed"/>
+
         <!-- ===== Settings ===== -->
         <ScrollViewer x:Name="PageSettings" Grid.Column="1" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" Focusable="False">
             <StackPanel Margin="32,32,32,24" MaxWidth="720" HorizontalAlignment="Left">
@@ -655,6 +659,44 @@
                         </Grid>
                     </StackPanel>
                 </Border>
+
+                <!-- ===== Developer mode (MainWindow.DevMode.cs) ===== -->
+                <TextBlock Style="{StaticResource SectionHeading}" Text="Developer mode"/>
+                <Border Style="{StaticResource SettingsCard}">
+                    <StackPanel>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Write code in editors and terminals"/>
+                                <TextBlock Style="{StaticResource RowHelp}" TextWrapping="Wrap"
+                                           Text="Say “camel case user id” for userId, or snake, kebab, pascal and constant case. Say “open paren”, “equals”, “dot” or in Danish “start parentes”, “lig med”, “prik”. In terminals there is no capital letter or closing period."/>
+                            </StackPanel>
+                            <CheckBox x:Name="DevModeBox" Grid.Column="1" Click="DevSetting_Changed" AutomationProperties.Name="Write code in editors and terminals"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Learn names from the open project"/>
+                                <TextBlock Style="{StaticResource RowHelp}"
+                                           Text="In VS Code and Cursor, file and code names from the open folder are spelled as in the project. Read on this PC only, and only from folders VS Code has opened."/>
+                            </StackPanel>
+                            <CheckBox x:Name="DevProjectBox" Grid.Column="1" Click="DevSetting_Changed" AutomationProperties.Name="Learn names from the open project"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Code apps"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Program names, separated by commas."/>
+                                <Button Style="{StaticResource BtnGhost}" HorizontalAlignment="Left" Margin="-12,6,0,0" Content="Restore the default list" Click="DevAppsReset_Click"/>
+                            </StackPanel>
+                            <TextBox x:Name="DevAppsBox" Grid.Column="1" Style="{StaticResource InputMultiline}" Height="96" VerticalAlignment="Center"
+                                     FontFamily="{StaticResource FontMono}" FontSize="12" LostFocus="DevSetting_Changed" AutomationProperties.Name="Code apps"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+                <!-- ===== end Developer mode ===== -->
 
                 <TextBlock x:Name="DataPathText" Style="{StaticResource Caption}" Margin="0,-8,0,0"/>
             </StackPanel>

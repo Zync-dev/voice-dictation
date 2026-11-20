@@ -106,6 +106,18 @@ public class AppSettings
     public ObservableCollection<Snippet> Snippets { get; set; } = [];
     public ObservableCollection<AppStyleRule> AppStyles { get; set; } = [];
 
+    // ---- Developer mode and file transcription ----
+
+    /// <summary>In code editors and terminals, write spoken code as code ("camel case user id" → userId, "open paren" → "(").</summary>
+    public bool DevModeEnabled { get; set; } = true;
+    /// <summary>Process names (without .exe, comma separated) that count as code editors or terminals.</summary>
+    public string DevModeApps { get; set; } = DevMode.DefaultApps;
+    /// <summary>Learn names from the project open in VS Code (found through VS Code's own recent-folders list).</summary>
+    public bool DevModeProjectTerms { get; set; } = true;
+    /// <summary>Language for file transcription: "auto" (as in dictation), "main" or "second".</summary>
+    public string FileTranscribeLanguage { get; set; } = "auto";
+    // ---- end Developer mode and file transcription ----
+
     // ---- persistence ----
 
     /// <summary>The real data folder; speech models always live here so test runs do not download them again.</summary>

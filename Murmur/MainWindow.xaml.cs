@@ -112,6 +112,7 @@ public partial class MainWindow : Window
         CustomInstructionsBox.Text = S.CustomInstructions;
 
         DataPathText.Text = "Settings, history and speech models are stored in " + AppSettings.DataDir;
+        LoadDeveloperSettings(); // ---- Developer mode (MainWindow.DevMode.cs) ----
 
         _loading = false;
         RefreshHotkeys();
@@ -119,7 +120,7 @@ public partial class MainWindow : Window
         SecondLanguagePanel.Visibility = S.Language == "auto" ? Visibility.Collapsed : Visibility.Visible;
         RefreshStats();
         RefreshModelTag();
-        Nav.SelectedIndex = Math.Clamp(app.StartPage, 0, 4);
+        Nav.SelectedIndex = Math.Clamp(app.StartPage, 0, Nav.Items.Count - 1);
 
         Activated += (_, _) => KeepDayLabelsCurrent();
         // Setting rows keep a fixed control column; give the labels a little more room in a small window.
@@ -138,7 +139,7 @@ public partial class MainWindow : Window
         if (PageHome == null || Nav.SelectedIndex < 0) return;
         CommitGrids();
         PruneBlankRows();
-        FrameworkElement[] pages = [PageHome, PageDictionary, PageSnippets, PageStyle, PageSettings];
+        FrameworkElement[] pages = [PageHome, PageDictionary, PageSnippets, PageStyle, PageTranscribe, PageSettings];
         for (int i = 0; i < pages.Length; i++)
         {
             bool show = i == Nav.SelectedIndex;
