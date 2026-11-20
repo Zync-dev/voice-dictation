@@ -217,26 +217,28 @@ public sealed class Transcriber : IDisposable
     /// <summary>Which model the live previews use, for the log.</summary>
     public string PreviewModel => PreviewFactory == null ? "none" : PreviewFactory == _factory ? _settings.LocalModel : _smallModelId;
 
-    /// <summary>Picks between the user's main and second language from the first seconds of the recording.</summary>
-    private string DetectAmongUserLanguages(float[] samples, WhisperProcessor? detector = null)
+    // Language choice for someone who speaks two languages.
+    // The small model that used to pick the language heard real microphone Danish as English, and forcing the wrong
+    // language makes Whisper translate instead of transcribe. So the big model that writes the words also picks the
+    // language, in the same pass; if it hears anything other than the user's two languages (Danish is often taken
+    // for Norwegian or Swedish), the words are written again in the main language.
+
+    /// <summary>ISO code for a language as Whisper or a cloud API reports it ("da", "danish", "Danish").</summary>
+    internal static string? ToLanguageCode(string? reported)
     {
-        detector ??= _detector;
-        string main = _settings.Language, second = _settings.SecondLanguage;
-        if (detector == null) return main;
-        try
-        {
-            var head = samples.Length > AudioRecorder.SampleRate * 10 ? samples[..(AudioRecorder.SampleRate * 10)] : samples;
-            // The library compares only these two and returns the likelier one; ties and errors go to the first (main).
-            // The probability it reports is that language's share among all languages, so it is not a usable threshold.
-            // Overall best guess: Danish is often heard as German or Swedish, so anything that is not the second language counts as the main one.
-            var (language, _) = detector.DetectLanguageWithProbability(head);
-            return language == second ? second : main;
-        }
-        catch (Exception ex)
-        {
-            Log.Write("Language detection failed: " + ex.Message);
-            return main;
-        }
+        if (string.IsNullOrWhiteSpace(reported)) return null;
+        reported = reported.Trim();
+        if (reported.Length == 2) return reported.ToLowerInvariant();
+        foreach (var (code, name) in Languages.All)
+            if (string.Equals(name, reported, StringComparison.OrdinalIgnoreCase)) return code;
+        return reported.ToLowerInvariant();
+    }
+
+    /// <summary>The reported language if it is one of the user's two, else null.</summary>
+    private string? OneOfUserLanguages(string? reported)
+    {
+        string? code = ToLanguageCode(reported);
+        return code == _settings.Language || code == _settings.SecondLanguage ? code : null;
     }
 
     // Whisper normally encodes a full 30-second window (1500 frames) however short the recording is.
@@ -282,8 +284,6 @@ public sealed class Transcriber : IDisposable
         if (_settings.Engine != SttEngine.Cloud)
             return await TranscribeLocalAsync(samples, vocabularyPrompt, ct, previews);
 
-        // Telling the two languages apart happens on this PC even when the transcription is in the cloud.
-        _ = EnsureDetectorAsync();
         var cloudWatch = System.Diagnostics.Stopwatch.StartNew();
 
         // Cloud APIs reject uploads over ~25 MB (about 13 minutes of WAV), so long recordings go up in pieces.
@@ -337,6 +337,8 @@ public sealed class Transcriber : IDisposable
     {
         internal string? Language;
         internal int DecidedAt;
+        /// <summary>True when the language was picked by the main model, which the final pass can trust.</summary>
+        internal bool ByMainModel;
     }
 
     /// <summary>
@@ -353,19 +355,12 @@ public sealed class Transcriber : IDisposable
             if (factory == null || !CanPreview) return "";
             return await Task.Run(async () =>
             {
-                // Pick the language once, and once more when there is enough speech to be sure; after that it is fixed.
+                // The model listens for the language itself on the first preview, and once more when there is
+                // enough speech to be sure; after that it is fixed for the recording.
                 const int sure = AudioRecorder.SampleRate * 4;
-                if (session.Language == null || (NeedsDetector && session.DecidedAt < sure && heard >= sure))
-                {
-                    // The same detector the final pass uses, with a narrower window: it cannot be interrupted, so it must be short.
-                    if (NeedsDetector && _detectorFactory != null)
-                        _previewDetector ??= _detectorFactory.CreateBuilder().WithLanguage("auto").WithThreads(PreviewThreads).WithAudioContextSize(MinAudioContext).Build();
-                    session.Language = NeedsDetector ? DetectAmongUserLanguages(samples, _previewDetector) : _settings.Language == "auto" ? null : _settings.Language;
-                    session.DecidedAt = heard;
-                    // Released while the language was being picked: do not start on the words at all.
-                    ct.ThrowIfCancellationRequested();
-                }
-                string language = session.Language ?? "auto";
+                bool decide = session.Language == null || (NeedsDetector && session.DecidedAt < sure && heard >= sure);
+                string language = decide && (NeedsDetector || _settings.Language == "auto") ? "auto"
+                    : session.Language ?? _settings.Language;
                 var builder = factory.CreateBuilder()
                     .WithLanguage(language)
                     .WithThreads(Math.Clamp(Environment.ProcessorCount - 2, 2, 8))
@@ -380,8 +375,17 @@ public sealed class Transcriber : IDisposable
                     sb.Append(segment.Text);
                     detected ??= segment.Language;
                 }
-                // On auto, the main model's first guess is kept for the rest of the recording.
-                if (language == "auto" && !string.IsNullOrEmpty(detected)) session.Language = detected;
+                if (language == "auto")
+                {
+                    session.Language = NeedsDetector ? OneOfUserLanguages(detected) ?? _settings.Language : ToLanguageCode(detected);
+                    session.DecidedAt = heard;
+                    session.ByMainModel = factory == _factory;
+                }
+                else if (session.Language == null)
+                {
+                    session.Language = language;
+                    session.DecidedAt = heard;
+                }
                 return sb.ToString().Trim();
             }, ct);
         }
@@ -476,30 +480,43 @@ public sealed class Transcriber : IDisposable
             return await Task.Run(async () =>
             {
                 var watch = System.Diagnostics.Stopwatch.StartNew();
-                // The previews already picked between the two languages; when they heard (nearly) everything the
-                // detector would look at, that choice stands and the final pass does not detect again.
+                // When the main model itself already picked the language during the previews and heard (nearly)
+                // all of this recording's first ten seconds, that choice stands.
                 int head = Math.Min(samples.Length, AudioRecorder.SampleRate * 10);
-                bool reuse = NeedsDetector && previews?.Language != null && previews.DecidedAt >= head * 0.8;
-                string requested = reuse ? previews!.Language! : NeedsDetector ? DetectAmongUserLanguages(samples) : _settings.Language;
-                double detectMs = watch.Elapsed.TotalMilliseconds;
-
+                bool reuse = NeedsDetector && previews?.Language != null && previews.ByMainModel && previews.DecidedAt >= head * 0.8;
+                string requested = reuse ? previews!.Language! : NeedsDetector ? "auto" : _settings.Language;
                 int audioContext = AudioContextFor(samples.Length);
-                var builder = factory.CreateBuilder()
-                    .WithLanguage(requested)
-                    .WithThreads(Math.Clamp(Environment.ProcessorCount - 2, 2, 8));
-                if (audioContext < 1500) builder = builder.WithAudioContextSize(audioContext);
-                if (!string.IsNullOrWhiteSpace(prompt)) builder = builder.WithPrompt(prompt);
-                await using var processor = builder.Build();
-                var sb = new StringBuilder();
-                string? detected = null;
-                await foreach (var segment in processor.ProcessAsync(samples, ct))
+
+                async Task<(string Text, string? Detected)> Pass(string language)
                 {
-                    sb.Append(segment.Text);
-                    detected ??= segment.Language;
+                    var builder = factory.CreateBuilder()
+                        .WithLanguage(language)
+                        .WithThreads(Math.Clamp(Environment.ProcessorCount - 2, 2, 8));
+                    if (audioContext < 1500) builder = builder.WithAudioContextSize(audioContext);
+                    if (!string.IsNullOrWhiteSpace(prompt)) builder = builder.WithPrompt(prompt);
+                    await using var processor = builder.Build();
+                    var sb = new StringBuilder();
+                    string? detected = null;
+                    await foreach (var segment in processor.ProcessAsync(samples, ct))
+                    {
+                        sb.Append(segment.Text);
+                        detected ??= segment.Language;
+                    }
+                    return (sb.ToString().Trim(), detected);
                 }
-                string? language = requested == "auto" ? detected : requested;
-                LastTiming = $"model={_settings.LocalModel} language={language} queue={LastQueueMs:0}ms detect={(reuse ? "from preview" : $"{detectMs:0}ms")} transcribe={watch.Elapsed.TotalMilliseconds - detectMs:0}ms frames={audioContext}";
-                return new Transcript(sb.ToString().Trim(), language);
+
+                var (text, heard) = await Pass(requested);
+                string? language = requested == "auto" ? ToLanguageCode(heard) : requested;
+                string retry = "";
+                if (NeedsDetector && OneOfUserLanguages(language) == null)
+                {
+                    // Heard neither of the user's languages: write it again in the main one.
+                    retry = $" heard={language ?? "none"} retry={watch.ElapsedMilliseconds}ms";
+                    language = _settings.Language;
+                    (text, _) = await Pass(language);
+                }
+                LastTiming = $"model={_settings.LocalModel} language={language} queue={LastQueueMs:0}ms detect={(reuse ? "from preview" : NeedsDetector ? "in pass" : "fixed")}{retry} transcribe={watch.ElapsedMilliseconds}ms frames={audioContext}";
+                return new Transcript(text, language);
             }, ct);
         }
         finally { _gate.Release(); }
@@ -511,8 +528,8 @@ public sealed class Transcriber : IDisposable
         if (string.IsNullOrEmpty(key)) throw new InvalidOperationException("Cloud transcription needs an API key (Settings).");
 
         byte[] wav = AudioRecorder.ToWav(samples);
-        string requested = NeedsDetector ? DetectAmongUserLanguages(samples) : _settings.Language;
-        bool auto = requested == "auto";
+        // With two languages the cloud model listens first and only gets the main language forced on it if it heard neither.
+        string requested = NeedsDetector ? "auto" : _settings.Language;
 
         // The shared client allows 30 minutes (model downloads); a transcription must fail much sooner.
         double audioSeconds = samples.Length / (double)AudioRecorder.SampleRate;
@@ -521,6 +538,7 @@ public sealed class Transcriber : IDisposable
 
         async Task<HttpResponseMessage> SendAsync(string format)
         {
+            bool auto = requested == "auto";
             var form = new MultipartFormDataContent();
             var file = new ByteArrayContent(wav);
             file.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
@@ -538,18 +556,29 @@ public sealed class Transcriber : IDisposable
         {
             // verbose_json also reports the detected language, which the cleanup rules need on auto-detect.
             // Not every model supports it, so fall back to plain json on a 400.
+            bool auto = requested == "auto";
             var response = await SendAsync(auto ? "verbose_json" : "json");
             if (auto && response.StatusCode == System.Net.HttpStatusCode.BadRequest)
             {
                 response.Dispose();
                 response = await SendAsync("json");
             }
+            string? heard;
             using (response)
             {
                 var json = await Http.ReadJsonAsync(response);
                 string text = (json["text"]?.GetValue<string>() ?? "").Trim();
-                string? language = auto ? json["language"]?.GetValue<string>() : requested;
-                return (text, language);
+                heard = auto ? ToLanguageCode(json["language"]?.GetValue<string>()) : requested;
+                if (!NeedsDetector || OneOfUserLanguages(heard) != null) return (text, heard);
+            }
+
+            // Heard neither of the user's languages (or could not say): write it again in the main language.
+            Log.Write($"Cloud heard language '{heard ?? "none"}'; writing it again in {_settings.Language}");
+            requested = _settings.Language;
+            using (var again = await SendAsync("json"))
+            {
+                var json = await Http.ReadJsonAsync(again);
+                return ((json["text"]?.GetValue<string>() ?? "").Trim(), requested);
             }
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)

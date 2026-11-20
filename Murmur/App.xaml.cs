@@ -49,6 +49,12 @@ public partial class App : Application
             return;
         }
 
+        if (e.Args.Length == 3 && e.Args[0] == "--langtest")
+        {
+            _ = LangTestAsync(e.Args[1], e.Args[2]);
+            return;
+        }
+
         if (e.Args.Length == 3 && e.Args[0] == "--live-bench")
         {
             _ = LivePreview.BenchAsync(e.Args[1], e.Args[2]);
@@ -93,6 +99,43 @@ public partial class App : Application
 
         if (!e.Args.Contains("--minimized")) ShowMainWindow();
         _ = Controller.PrepareModelAsync();
+    }
+
+    /// <summary>
+    /// Developer check: Murmur.exe --langtest folder out.txt runs every WAV in the folder (named da*.wav / en*.wav)
+    /// through transcription with the saved settings (never saved back) and reports the language picked.
+    /// MURMUR_ENGINE=local or cloud overrides the engine.
+    /// </summary>
+    private async Task LangTestAsync(string folder, string outPath)
+    {
+        var lines = new List<string>();
+        try
+        {
+            var settings = AppSettings.Load();
+            string? engine = Environment.GetEnvironmentVariable("MURMUR_ENGINE");
+            if (engine == "local") settings.Engine = SttEngine.Local;
+            if (engine == "cloud") settings.Engine = SttEngine.Cloud;
+            lines.Add($"engine={settings.Engine} languages={settings.Language}+{settings.SecondLanguage} cloud={settings.CloudSttModel} local={settings.LocalModel}");
+            using var transcriber = new Transcriber(settings);
+            if (settings.Engine == SttEngine.Local) await transcriber.EnsureLocalModelAsync();
+            int right = 0, total = 0;
+            foreach (var file in System.IO.Directory.GetFiles(folder, "*.wav").OrderBy(f => f))
+            {
+                string name = System.IO.Path.GetFileNameWithoutExtension(file);
+                var samples = ReadWav(file);
+                AudioRecorder.Normalize(samples);
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                var result = await transcriber.TranscribeAsync(samples, "");
+                bool ok = result.Language != null && name.StartsWith(result.Language);
+                total++; if (ok) right++;
+                lines.Add($"{name} {(ok ? "ok   " : "WRONG")} {result.Language} {watch.ElapsedMilliseconds}ms [{result.Text}] {transcriber.LastTiming}");
+                System.IO.File.WriteAllLines(outPath, lines);
+            }
+            lines.Add($"{right}/{total} right");
+        }
+        catch (Exception ex) { lines.Add("FAILED " + ex); }
+        System.IO.File.WriteAllLines(outPath, lines);
+        Shutdown();
     }
 
     /// <summary>Developer check: Murmur.exe --selftest in.wav out.txt runs a WAV through transcription and cleanup.</summary>
