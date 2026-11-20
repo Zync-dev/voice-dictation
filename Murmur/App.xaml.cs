@@ -176,14 +176,28 @@ public partial class App : Application
             lines.Add($"engine={settings.Engine} languages={settings.Language}+{settings.SecondLanguage} cloud={settings.CloudSttModel} local={settings.LocalModel}");
             using var transcriber = new Transcriber(settings);
             if (settings.Engine == SttEngine.Local) await transcriber.EnsureLocalModelAsync();
+            // MURMUR_LANGTEST_PIPELINE=1: the audio clean-up and the word list a real dictation gets.
+            bool pipeline = Environment.GetEnvironmentVariable("MURMUR_LANGTEST_PIPELINE") == "1";
+            var vocabulary = new Vocabulary(settings);
+            if (pipeline)
+            {
+                vocabulary.SetHistory(new HistoryStore().Items.Select(h => (h.Time, h.Text)));
+                lines.Add($"pipeline: audio clean-up {AudioCleanup.From(settings)}, word list from dictionary and history");
+            }
             int right = 0, total = 0;
             foreach (var file in System.IO.Directory.GetFiles(folder, "*.wav").OrderBy(f => f))
             {
                 string name = System.IO.Path.GetFileNameWithoutExtension(file);
                 var samples = ReadWav(file);
-                AudioRecorder.Normalize(samples);
                 var watch = System.Diagnostics.Stopwatch.StartNew();
-                var result = await transcriber.TranscribeAsync(samples, "");
+                string prompt = "";
+                if (pipeline)
+                {
+                    prompt = vocabulary.BuildPrompt(null, samples.Length / (double)AudioRecorder.SampleRate);
+                    samples = AudioProcessing.Prepare(samples, AudioCleanup.From(settings), out _);
+                }
+                else AudioRecorder.Normalize(samples);
+                var result = await transcriber.TranscribeAsync(samples, prompt);
                 bool ok = result.Language != null && name.StartsWith(result.Language);
                 total++; if (ok) right++;
                 lines.Add($"{name} {(ok ? "ok   " : "WRONG")} {result.Language} {watch.ElapsedMilliseconds}ms [{result.Text}] {transcriber.LastTiming}");

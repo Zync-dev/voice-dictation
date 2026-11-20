@@ -75,7 +75,7 @@ public partial class App
                 Check("project names in text", ProjectVocabulary.Apply(vocabulary, "the dictation controller calls the text processor"), "the DictationController calls the TextProcessor");
                 Check("prose left alone", ProjectVocabulary.Apply(vocabulary, "we should test it in the morning"), "we should test it in the morning");
                 Check("library names not rewritten", ProjectVocabulary.Apply(vocabulary, "the name starts with a letter"), "the name starts with a letter");
-                Check("names in the prompt", vocabulary.Terms.Contains("DictationController") && vocabulary.Terms.Contains("StartsWith") ? "yes" : "no", "yes");
+                Check("names in the prompt", vocabulary.Terms.Contains("DictationController") && vocabulary.Terms.Contains("CancellationToken") ? "yes" : "no", "yes");
             }
             else lines.Add("SKIP  project names (source folder not found)");
 
@@ -183,6 +183,8 @@ public partial class App
         string path = shot[7..].Trim('"');
         int delay = args.FirstOrDefault(a => a.StartsWith("--shot-delay=")) is { } d && int.TryParse(d[13..], out int ms) ? ms : 3000;
         bool scroll = args.Contains("--shot-scroll=end");
+        // --shot-scroll=<pixels> scrolls Settings to that offset first (for shots of the whole page in parts).
+        double? offset = args.FirstOrDefault(a => a.StartsWith("--shot-scroll=")) is { } o && double.TryParse(o[14..], out double px) ? px : null;
         _ = Task.Run(async () =>
         {
             await Task.Delay(delay);
@@ -192,6 +194,7 @@ public partial class App
                 {
                     if (_window == null) return;
                     if (scroll && _window.FindName("PageSettings") is System.Windows.Controls.ScrollViewer sv) { sv.ScrollToEnd(); await Task.Delay(400); }
+                    if (offset is { } y && _window.FindName("PageSettings") is System.Windows.Controls.ScrollViewer sv2) { sv2.ScrollToVerticalOffset(y); await Task.Delay(400); }
                     if (_window.Content is not FrameworkElement content) return;
                     var dpi = VisualTreeHelper.GetDpi(_window);
                     var size = new Size(content.ActualWidth, content.ActualHeight);
@@ -199,7 +202,8 @@ public partial class App
                     using (var dc = visual.RenderOpen())
                     {
                         dc.DrawRectangle(_window.Background, null, new Rect(size));
-                        dc.DrawRectangle(new VisualBrush(content), null, new Rect(size));
+                        // An absolute viewbox: anything drawn outside the window (a shadow, an off-screen element) must not shrink the shot.
+                        dc.DrawRectangle(new VisualBrush(content) { Stretch = Stretch.None, ViewboxUnits = BrushMappingMode.Absolute, Viewbox = new Rect(size), AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top }, null, new Rect(size));
                     }
                     var bitmap = new RenderTargetBitmap((int)(size.Width * dpi.DpiScaleX), (int)(size.Height * dpi.DpiScaleY), dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
                     bitmap.Render(visual);

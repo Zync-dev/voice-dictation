@@ -286,7 +286,7 @@ public sealed class DictationController
             var route = Modes.RouteFor(_settings, _processor.HasAi);
             var transcript = mode == HotkeyKind.Translate && route == Modes.TranslateRoute.WhisperCloud
                 ? new Transcript(await Modes.CloudTranslateAsync(_settings, samples), "en")
-                : await _transcriber.TranscribeAsync(samples, _processor.VocabularyPrompt(context, seconds), previews: preview?.Session,
+                : await _transcriber.TranscribeAsync(samples, mode == HotkeyKind.Translate ? _processor.DictionaryPrompt() : _processor.VocabularyPrompt(context, seconds), previews: preview?.Session,
                     options: mode == HotkeyKind.Translate ? new SpeechOptions(AnyLanguage: true, TranslateToEnglish: route == Modes.TranslateRoute.WhisperLocal) : null);
             // A model that failed at startup may have loaded now; keep the Home tag truthful.
             if (_settings.Engine == SttEngine.Local && Model != ModelState.Ready) SetModel(ModelState.Ready);
@@ -582,6 +582,17 @@ public sealed class DictationController
                 if (string.Equals(target.Process, System.Diagnostics.Process.GetCurrentProcess().ProcessName, StringComparison.OrdinalIgnoreCase) || target.Process == "unknown")
                 {
                     _overlay.NoteOnResult("Click into the app first", OverlayWindow.Note.Info, seconds: 4);
+                    return;
+                }
+                // Learning and context guards apply to an inserted answer too: excluded apps and password fields.
+                if (_assist.IsExcluded(out string offIn))
+                {
+                    _overlay.NoteOnResult($"Murmur is off in {offIn}", OverlayWindow.Note.Info, seconds: 4);
+                    return;
+                }
+                if (await _assist.IsPasswordTargetAsync(null))
+                {
+                    _overlay.NoteOnResult("Not pasted into a password field", OverlayWindow.Note.Info, seconds: 6);
                     return;
                 }
                 var window = Native.GetForegroundWindow();

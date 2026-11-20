@@ -61,12 +61,13 @@ Developer switches:
 | `--theme=night` or `--theme=paper` | Pins the theme instead of following Windows |
 | `--page=N` | Opens the window on page N (0 Home, 1 Dictionary, 2 Snippets, 3 Style, 4 Transcribe, 5 Settings) |
 | `--selftest in.wav out.txt` | Runs a 16 kHz mono WAV through transcription and cleanup |
+| `--langtest folder out.txt` | Transcribes every WAV in the folder and checks the heard language against the file name (da*, en*); `MURMUR_ENGINE=local` or `cloud`, and `MURMUR_LANGTEST_PIPELINE=1` adds the sound clean-up and word list a real dictation gets |
 | `--devtest out.txt` | Developer mode and file transcription checks (table of spoken code in English and Danish, window titles, project names, .srt); no network; exit code 1 on a failure |
 | `--devspeech folder out.txt` | Dictates every WAV in the folder as if into VS Code and into Windows Terminal (saved settings, AI polish off; `MURMUR_ENGINE=local` or `cloud`) |
 | `--filetest in.(wav\|mp3\|m4a\|mp4…) out.txt` | Transcribes a file as the Transcribe page does; `MURMUR_ENGINE`, `MURMUR_FILE_LANGUAGE=auto\|main\|second`, `MURMUR_FILE_CANCEL=1` (checks Stop), `MURMUR_FILE_SUMMARY=1` (calls the AI model) |
 | `--transcribe=file` | Opens the Transcribe page and starts on that file |
 | `--transcribe-demo=working\|done\|summary\|error` | Shows a Transcribe state with sample text, for screenshots |
-| `--shot=out.png` | Saves the window as an image after `--shot-delay=ms` (default 3000) and quits; `--shot-scroll=end` scrolls Settings down first |
+| `--shot=out.png` | Saves the window as an image after `--shot-delay=ms` (default 3000) and quits; `--shot-scroll=end` (or `=<pixels>`) scrolls Settings down first |
 
 A test run with `MURMUR_DATA_DIR` set is its own instance per data folder, so several test runs can run beside the real app.
 
@@ -126,7 +127,7 @@ Developer switches for this:
 | `--vocab-test folder out.txt` | Transcribes every WAV in the folder (any rate; references from `*.tsv`: name, language, text) with and without the word list and reports word error rates. `MURMUR_ENGINE=cloud`, `MURMUR_VOCAB_ONLY=mix` and `MURMUR_VOCAB_VARIANTS=none,history+screen` narrow it |
 | `--context-llm-test out.txt` | Five AI polish / Command calls with screen context (copying, name spelling, instructions hidden in the screen text) |
 | `--learning-demo` | Shows the card notes of this feature; `MURMUR_CARD_SHOTS=folder` also saves each as a PNG |
-| `--show-learning` | Opens Settings scrolled to this section (with `--page=4`) |
+| `--show-learning` | Opens Settings scrolled to this section (with `--page=5`) |
 
 ## Modes and voice commands
 

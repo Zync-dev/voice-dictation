@@ -31,6 +31,15 @@ public sealed partial class TextProcessor
     public string VocabularyPrompt()
     {
         if (Vocabulary != null) return Vocabulary.BuildPrompt(Screen);
+        return DictionaryPrompt();
+    }
+
+    /// <summary>
+    /// Only the dictionary, behind a language-neutral "Glossary:". Translate uses it: it listens for any language, and
+    /// the main-language word list ("Ordliste: ...") could pull the language guess towards the main language.
+    /// </summary>
+    public string DictionaryPrompt()
+    {
         var terms = _settings.Dictionary.Select(d => d.Term.Trim()).Where(t => t.Length > 0).Distinct().Take(80).ToList();
         return terms.Count == 0 ? "" : "Glossary: " + string.Join(", ", terms) + ".";
     }
