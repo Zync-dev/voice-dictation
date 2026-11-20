@@ -113,6 +113,7 @@ public partial class MainWindow : Window
 
         DataPathText.Text = "Settings, history and speech models are stored in " + AppSettings.DataDir;
         LoadLearningSettings(); // Learning and context (MainWindow.Learning.cs)
+        InitModesSection(); // Modes and voice commands (MainWindow.Modes.cs)
 
         _loading = false;
         RefreshHotkeys();
@@ -433,6 +434,7 @@ public partial class MainWindow : Window
         // Keycap content has no text of its own for a screen reader.
         AutomationProperties.SetName(DictateHotkeyButton, "Dictate hotkey, " + HotkeyService.Describe(S.DictateHotkey));
         AutomationProperties.SetName(CommandHotkeyButton, "Command mode hotkey, " + HotkeyService.Describe(S.CommandHotkey));
+        RefreshModeHotkeys(); // Modes and voice commands (MainWindow.Modes.cs)
         _app.UpdateTrayText();
     }
 

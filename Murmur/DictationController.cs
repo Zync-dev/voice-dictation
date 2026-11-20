@@ -145,10 +145,12 @@ public sealed class DictationController
     {
         if (upgrade)
         {
-            // Same physical press growing from Ctrl+Win into Ctrl+Win+Alt: switch mode, never start/stop.
-            if (_state is State.Holding or State.HandsFree && kind == HotkeyKind.Command && _mode == HotkeyKind.Dictate)
+            // Same physical press growing from Ctrl+Win into Ctrl+Win+Alt (or Ctrl+Win+T, Ctrl+Win+A): switch mode, never
+            // start/stop. Only dictation grows into another mode, so command, translate and ask never run at the same time.
+            if (_state is State.Holding or State.HandsFree && kind is not (HotkeyKind.None or HotkeyKind.Dictate) && _mode == HotkeyKind.Dictate)
             {
-                _mode = HotkeyKind.Command;
+                if (Modes.Unavailable(kind, _settings, _processor.HasAi) != null) { Cancel(silent: true); ModeUnavailable(kind); return; }
+                _mode = kind;
                 _overlay.ShowRecording(_mode, _state == State.HandsFree);
             }
             return;
@@ -162,6 +164,7 @@ public sealed class DictationController
                     _overlay.Flash($"Murmur is off in {offIn}", seconds: 2);
                     break;
                 }
+                if (ModeUnavailable(kind)) break;
                 _mode = kind;
                 _downAt = DateTime.UtcNow;
                 _ignoreNextUp = false;
@@ -203,6 +206,7 @@ public sealed class DictationController
             // A new dictation replaces whatever the card held; a rewrite still waiting must not paste over it.
             _rewriteCts?.Cancel();
             _last = null;
+            _answer = null;
             _recorder.Start(_settings.Microphone);
             _maxTimer.Start();
             _overlay.ShowRecording(_mode, false);
@@ -253,17 +257,22 @@ public sealed class DictationController
                 return;
             }
 
-            _overlay.ShowBusy(mode == HotkeyKind.Command ? "Thinking" : "Writing");
+            _overlay.ShowBusy(mode switch { HotkeyKind.Command or HotkeyKind.Ask => "Thinking", HotkeyKind.Translate => "Translating", _ => "Writing" });
             var context = ActiveWindowInfo.Get();
             // Learning and context: the text read when recording began, and the password check (runs alongside transcription).
             var screen = await _assist.TakeScreenAsync();
             _processor.Screen = screen;
             var passwordCheck = _assist.IsPasswordTargetAsync(screen);
             // Ctrl+C in a terminal is "interrupt the running program", so never probe for a selection there.
-            string selection = mode == HotkeyKind.Command && !context.IsTerminal ? await TextInjector.CopySelectionAsync() : "";
+            string selection = mode is HotkeyKind.Command or HotkeyKind.Ask && !context.IsTerminal ? await TextInjector.CopySelectionAsync() : "";
 
             AudioRecorder.Normalize(samples);
-            var transcript = await _transcriber.TranscribeAsync(samples, _processor.VocabularyPrompt(seconds), previews: preview?.Session);
+            // ---- Modes and voice commands: translate listens for any language; without an AI model Whisper translates ----
+            var route = Modes.RouteFor(_settings, _processor.HasAi);
+            var transcript = mode == HotkeyKind.Translate && route == Modes.TranslateRoute.WhisperCloud
+                ? new Transcript(await Modes.CloudTranslateAsync(_settings, samples), "en")
+                : await _transcriber.TranscribeAsync(samples, _processor.VocabularyPrompt(seconds), previews: preview?.Session,
+                    options: mode == HotkeyKind.Translate ? new SpeechOptions(AnyLanguage: true, TranslateToEnglish: route == Modes.TranslateRoute.WhisperLocal) : null);
             // A model that failed at startup may have loaded now; keep the Home tag truthful.
             if (_settings.Engine == SttEngine.Local && Model != ModelState.Ready) SetModel(ModelState.Ready);
             string raw = TextProcessor.StripArtifacts(transcript.Text);
@@ -273,12 +282,28 @@ public sealed class DictationController
                 return;
             }
 
-            string text = mode == HotkeyKind.Command
-                ? await _processor.RunCommandAsync(raw, selection, context)
-                : await _processor.ProcessAsync(raw, context, transcript.Language);
+            if (mode == HotkeyKind.Ask)
+            {
+                await AnswerAsync(raw, selection, transcript.Language, context, seconds);
+                return;
+            }
+
+            string text = mode switch
+            {
+                HotkeyKind.Command => await _processor.RunCommandAsync(raw, selection, context),
+                HotkeyKind.Translate when route == Modes.TranslateRoute.Llm => await _processor.TranslateAsync(raw, context),
+                HotkeyKind.Translate => await _processor.ProcessAsync(raw, context, "en"), // Whisper already wrote it in English
+                _ => await _processor.ProcessAsync(raw, context, transcript.Language)
+            };
             if (text.Length == 0)
             {
-                _overlay.Flash("Nothing to insert", seconds: 1.5);
+                // "Slet alt" / "delete everything" throws the dictation away on purpose.
+                if (_processor.LastVoiceCancel && mode != HotkeyKind.Command)
+                {
+                    if (_settings.Sounds) Sounds.Cancel();
+                    _overlay.Flash("Deleted. Nothing was inserted.", seconds: 1.8);
+                }
+                else _overlay.Flash("Nothing to insert", seconds: 1.5);
                 return;
             }
 
@@ -292,7 +317,7 @@ public sealed class DictationController
                 return;
             }
 
-            string toInsert = _settings.TrailingSpace && mode == HotkeyKind.Dictate && !text.EndsWith('\n') ? text + " " : text;
+            string toInsert = _settings.TrailingSpace && mode is HotkeyKind.Dictate or HotkeyKind.Translate && !text.EndsWith('\n') ? text + " " : text;
             // Record first, so the text is recoverable from History even if inserting fails.
             _history.Add(new HistoryEntry
             {
@@ -300,7 +325,7 @@ public sealed class DictationController
                 Text = text,
                 Raw = raw,
                 App = context.Process,
-                Mode = mode == HotkeyKind.Command ? "Command" : "Dictation",
+                Mode = mode switch { HotkeyKind.Command => "Command", HotkeyKind.Translate => "Translate", _ => "Dictation" },
                 Seconds = seconds,
                 Words = HistoryStore.CountWords(text)
             });
@@ -308,12 +333,12 @@ public sealed class DictationController
             var target = Native.GetForegroundWindow();
             await TextInjector.PasteAsync(toInsert, _settings.RestoreClipboard);
             _last = new Insertion { Text = text, Typed = toInsert, Window = target, App = context.Process };
-            _overlay.ShowResult(text, context.Process, _processor.CanRewrite);
+            _overlay.ShowResult(text, context.Process, _processor.CanRewrite, mode == HotkeyKind.Translate ? "Translated" : "Inserted");
             _assist.AfterPaste(toInsert, target); // Learning and context: watch for corrections
             // One line per dictation, so a slow one can be traced to its cause.
             string live = preview == null ? "live=off" :
                 $"live={preview.Count} previews on {_transcriber.PreviewModel} avg {(preview.Count == 0 ? 0 : preview.TotalMs / preview.Count):0}ms max {preview.MaxMs:0}ms, final waited {_transcriber.LastQueueMs:0}ms";
-            Log.Write($"Dictation {seconds:0.0}s audio, total {totalWatch.ElapsedMilliseconds}ms: {_transcriber.LastTiming} paste={pasteWatch.ElapsedMilliseconds}ms {live}");
+            Log.Write($"{(mode == HotkeyKind.Translate ? $"Translate ({route})" : "Dictation")} {seconds:0.0}s audio, total {totalWatch.ElapsedMilliseconds}ms: {_transcriber.LastTiming} paste={pasteWatch.ElapsedMilliseconds}ms {live}");
         }
         catch (Exception ex)
         {
@@ -354,11 +379,13 @@ public sealed class DictationController
     {
         _rewriteCts?.Cancel();
         _last = null;
+        _answer = null;
         _overlay.HideNow();
     }
 
     private async Task OnCardActionAsync(string action)
     {
+        if (action.StartsWith("answer-")) { await OnAnswerActionAsync(action); return; }
         var last = _last;
         if (action == "close" || last == null) { Dismiss(); return; }
         if (last.Busy || _state != State.Idle) return;
@@ -451,6 +478,88 @@ public sealed class DictationController
 
     private static string Pretty(string process) =>
         string.IsNullOrEmpty(process) || process == "unknown" ? "the app" : char.ToUpper(process[0]) + process[1..];
+
+    // ---------- Modes and voice commands ----------
+
+    /// <summary>The answer from Ask that the card holds, until it is inserted, copied away or closed.</summary>
+    private sealed class Answer
+    {
+        public string Text = "";
+        public string Question = "";
+    }
+
+    private Answer? _answer;
+
+    /// <summary>True when an AI model is set up (for Settings: what Translate and Ask can do).</summary>
+    public bool HasAi => _processor.HasAi;
+
+    /// <summary>True (after saying why on the card) when a mode needs something that is not set up, such as an AI model.</summary>
+    private bool ModeUnavailable(HotkeyKind kind)
+    {
+        if (Modes.Unavailable(kind, _settings, _processor.HasAi) is not { } why) return false;
+        _overlay.Flash(why, error: true);
+        if (_settings.Sounds) Sounds.Cancel();
+        return true;
+    }
+
+    /// <summary>Ask: the answer goes on the card, never at the cursor. Insert on the card types it.</summary>
+    private async Task AnswerAsync(string question, string selection, string? language, ActiveWindowInfo context, double seconds)
+    {
+        if (_processor.ApplyVoiceCommands(question) == null)
+        {
+            if (_settings.Sounds) Sounds.Cancel();
+            _overlay.Flash("Deleted. Nothing was asked.", seconds: 1.8);
+            return;
+        }
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        string answer = await _processor.AskAsync(question, selection, language, context);
+        _history.Add(new HistoryEntry
+        {
+            Time = DateTime.Now,
+            Text = answer,
+            Raw = question,
+            App = context.Process,
+            Mode = "Ask",
+            Seconds = seconds,
+            Words = HistoryStore.CountWords(question) // the words you spoke, not the answer
+        });
+        _answer = new Answer { Text = answer, Question = question };
+        _overlay.ShowAnswer(answer, question);
+        Log.Write($"Ask {seconds:0.0}s audio, answer in {watch.ElapsedMilliseconds}ms, {HistoryStore.CountWords(answer)} words{(selection.Length > 0 ? $", about {selection.Length} selected characters" : "")}: {_transcriber.LastTiming}");
+    }
+
+    private async Task OnAnswerActionAsync(string action)
+    {
+        var answer = _answer;
+        if (answer == null || _state != State.Idle) return;
+        switch (action)
+        {
+            case "answer-copy":
+                bool copied = TextInjector.TrySetText(answer.Text);
+                _overlay.NoteOnResult(copied ? "Copied" : "Clipboard is busy. Try again.", copied ? OverlayWindow.Note.Done : OverlayWindow.Note.Error, seconds: copied ? 1.2 : 3);
+                break;
+
+            case "answer-insert":
+                var target = ActiveWindowInfo.Get();
+                if (string.Equals(target.Process, System.Diagnostics.Process.GetCurrentProcess().ProcessName, StringComparison.OrdinalIgnoreCase) || target.Process == "unknown")
+                {
+                    _overlay.NoteOnResult("Click into the app first", OverlayWindow.Note.Info, seconds: 4);
+                    return;
+                }
+                var window = Native.GetForegroundWindow();
+                try { await TextInjector.PasteAsync(answer.Text, _settings.RestoreClipboard); }
+                catch (Exception ex)
+                {
+                    _overlay.NoteOnResult(ex.Message, OverlayWindow.Note.Error, seconds: 4);
+                    return;
+                }
+                _answer = null;
+                // From here it is inserted text like any other: Copy, Undo and the rewrites apply.
+                _last = new Insertion { Text = answer.Text, Typed = answer.Text, Window = window, App = target.Process };
+                _overlay.ShowResult(answer.Text, target.Process, _processor.CanRewrite);
+                break;
+        }
+    }
 }
 
 /// <summary>

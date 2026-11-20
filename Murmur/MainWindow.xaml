@@ -466,6 +466,54 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ==== Modes and voice commands (MainWindow.Modes.cs) ==== -->
+                <TextBlock Style="{StaticResource SectionHeading}" Text="Modes and voice commands"/>
+                <Border Style="{StaticResource SettingsCard}">
+                    <StackPanel>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Translate"/>
+                                <TextBlock x:Name="TranslateHelp" Style="{StaticResource RowHelp}" Text="Speak in any language. Murmur writes it in the language below."/>
+                            </StackPanel>
+                            <Button x:Name="TranslateHotkeyButton" Grid.Column="1" Style="{StaticResource BtnHotkey}" VerticalAlignment="Center" Click="TranslateHotkey_Click"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Translate into"/>
+                                <TextBlock x:Name="TranslateTargetHelp" Style="{StaticResource RowHelp}"/>
+                            </StackPanel>
+                            <ComboBox x:Name="TranslateTargetBox" Grid.Column="1" VerticalAlignment="Center" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                      SelectionChanged="ModeSetting_Changed" AutomationProperties.Name="Translate into"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Ask"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Ask a question out loud. The answer appears on the card instead of being typed. Select text first to ask about it. Needs AI polish."/>
+                            </StackPanel>
+                            <Button x:Name="AskHotkeyButton" Grid.Column="1" Style="{StaticResource BtnHotkey}" VerticalAlignment="Center" Click="AskHotkey_Click"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Voice commands"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="While you dictate, say “ny linje”, “nyt afsnit”, “punkt”, “komma”, “slet det” or “slet alt”. In English: “new line”, “new paragraph”, “bullet point”, “comma”, “scratch that”, “delete everything”."/>
+                            </StackPanel>
+                            <CheckBox x:Name="VoiceCommandsBox" Grid.Column="1" Click="ModeSetting_Changed" AutomationProperties.Name="Voice commands"/>
+                        </Grid>
+                        <StackPanel x:Name="HotkeyConflictPanel" Visibility="Collapsed">
+                            <Border Style="{StaticResource RowLine}"/>
+                            <TextBlock x:Name="HotkeyConflictText" Style="{StaticResource RowHelp}" Foreground="{DynamicResource Danger}" Margin="0,12,0,12" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+                <!-- ==== end Modes and voice commands ==== -->
+
                 <!-- Microphone and language -->
                 <TextBlock Style="{StaticResource SectionHeading}" Text="Microphone and language"/>
                 <Border Style="{StaticResource SettingsCard}">

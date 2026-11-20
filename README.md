@@ -91,6 +91,27 @@ Developer switches for this:
 | `--learning-demo` | Shows the card notes of this feature; `MURMUR_CARD_SHOTS=folder` also saves each as a PNG |
 | `--show-learning` | Opens Settings scrolled to this section (with `--page=4`) |
 
+## Modes and voice commands
+
+| Feature | How it works |
+| --- | --- |
+| Translate | Hold **Ctrl + Win + T** (hold the dictation keys, then add T). Speak in any language; Murmur writes it in the language set under Settings › Modes and voice commands (English by default). English speech is written in your main language instead, so a Danish speaker can go both ways. Uses the AI model when one is set up. Without one, Whisper translates into English itself: on this PC with a non-Turbo speech model (the Turbo models cannot translate), or through the cloud speech service's translations endpoint. |
+| Ask | Hold **Ctrl + Win + A** and ask a question. The answer appears on the dictation card (scrolls when long) with **Copy**, **Insert** and **Esc** keycaps; nothing is typed until you press Insert. Select text first to ask about it ("hvad betyder det her?"). Needs an AI model. |
+| Voice commands | While dictating, in Danish or English: "ny linje" / "new line", "nyt afsnit" / "new paragraph", "punkt" / "bullet point" (list items), "punktopstilling" / "bullet list" and "nummereret liste" / "numbered list" (the items follow, separated by commas or "punkt"; "slut liste" / "end list" ends it), "komma", "punktum", "spørgsmålstegn", "udråbstegn" / "comma", "full stop", "question mark", "exclamation mark", "citat ... slut citat" / "quote ... end quote", "slet det" / "scratch that" (takes back the sentence before it) and "slet alt" / "delete everything" (throws the dictation away). Applied by rules, so they work without an AI model. A word only counts as a command when the words around it say so: "det er et vigtigt punkt", "a new line of products" and "han satte spørgsmålstegn ved det" stay as spoken. Can be turned off in Settings. |
+| One mode at a time | Translate, Ask and Command mode are reached by adding a key to the held dictation keys. Once one of them has started, the others cannot take over until every key is released. Settings shows a warning when two hotkeys are the same, when one hotkey can never start, or when a hotkey is also a Windows or Game Bar shortcut. |
+
+The default hotkeys were picked to stay clear of Windows: Ctrl + Win + T and Ctrl + Win + A are not Windows or Game Bar shortcuts (Win + Alt + key belongs to the Game Bar, Ctrl + Win + D/C/N/O/S/Q/V to Windows, and Ctrl + Alt + Shift + Win is the Office key). The card shows Translate in sky blue (`#5cc8ff`) and Ask in lime (`#c1e35c`); these two overlay colours are new and would be `overlay-translate` and `overlay-ask` in the design system.
+
+Developer switches for these features:
+
+| Switch | What it does |
+| --- | --- |
+| `--rulestest out.txt` | Runs the voice-command tables (Danish and English commands, and many ordinary sentences that must stay as spoken), the hotkey key sequences and the conflict check. No speech model, no network |
+| `--modestest folder out.txt` | Runs the WAV clips in the folder through Whisper's own translation on this PC and, with an AI model, through Translate (into English and into Danish) and Ask. `MURMUR_MODES=whisper` skips every AI call; `MURMUR_CLIPS=da1,en1`, `MURMUR_LLM_CLIPS=2` and `MURMUR_TRANSLATE_MODELS=base,large-v3-turbo-q5` narrow it down |
+| `--modes-demo` | Plays the card through Translate, Ask and a long answer without a microphone |
+
+A test run with its own `MURMUR_DATA_DIR` is now its own instance per data folder, so several test runs can go side by side.
+
 ## Where data lives
 
 `%AppData%\Murmur` - `settings.json`, `history.json`, `murmur.log` and `models\`. API keys are encrypted with Windows DPAPI for your user account.

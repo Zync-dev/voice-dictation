@@ -278,11 +278,13 @@ public sealed class Transcriber : IDisposable
     }
 
     /// <param name="previews">The live previews of this recording, whose language choice is reused when it heard (nearly) all of it.</param>
-    public async Task<Transcript> TranscribeAsync(float[] samples, string vocabularyPrompt, CancellationToken ct = default, PreviewSession? previews = null)
+    /// <param name="options">Translate mode: listen for any language, and optionally have Whisper translate into English on this PC.</param>
+    public async Task<Transcript> TranscribeAsync(float[] samples, string vocabularyPrompt, CancellationToken ct = default, PreviewSession? previews = null, SpeechOptions? options = null)
     {
         LastQueueMs = 0;
-        if (_settings.Engine != SttEngine.Cloud)
-            return await TranscribeLocalAsync(samples, vocabularyPrompt, ct, previews);
+        options ??= new SpeechOptions();
+        if (_settings.Engine != SttEngine.Cloud || options.TranslateToEnglish)
+            return await TranscribeLocalAsync(samples, vocabularyPrompt, ct, options.AnyLanguage ? null : previews, options);
 
         var cloudWatch = System.Diagnostics.Stopwatch.StartNew();
 
@@ -291,7 +293,7 @@ public sealed class Transcriber : IDisposable
         string? language = null;
         foreach (var chunk in SplitForUpload(samples))
         {
-            var (text, detected) = await TranscribeCloudAsync(chunk, vocabularyPrompt, ct);
+            var (text, detected) = await TranscribeCloudAsync(chunk, vocabularyPrompt, ct, options.AnyLanguage);
             parts.Add(text);
             language ??= detected;
         }
@@ -467,7 +469,7 @@ public sealed class Transcriber : IDisposable
         return lines;
     }
 
-    private async Task<Transcript> TranscribeLocalAsync(float[] samples, string prompt, CancellationToken ct, PreviewSession? previews)
+    private async Task<Transcript> TranscribeLocalAsync(float[] samples, string prompt, CancellationToken ct, PreviewSession? previews, SpeechOptions options)
     {
         var queue = System.Diagnostics.Stopwatch.StartNew();
         await EnsureLocalModelAsync(ct);
@@ -484,7 +486,7 @@ public sealed class Transcriber : IDisposable
                 // all of this recording's first ten seconds, that choice stands.
                 int head = Math.Min(samples.Length, AudioRecorder.SampleRate * 10);
                 bool reuse = NeedsDetector && previews?.Language != null && previews.ByMainModel && previews.DecidedAt >= head * 0.8;
-                string requested = reuse ? previews!.Language! : NeedsDetector ? "auto" : _settings.Language;
+                string requested = options.AnyLanguage ? "auto" : reuse ? previews!.Language! : NeedsDetector ? "auto" : _settings.Language;
                 int audioContext = AudioContextFor(samples.Length);
 
                 async Task<(string Text, string? Detected)> Pass(string language)
@@ -494,6 +496,7 @@ public sealed class Transcriber : IDisposable
                         .WithThreads(Math.Clamp(Environment.ProcessorCount - 2, 2, 8));
                     if (audioContext < 1500) builder = builder.WithAudioContextSize(audioContext);
                     if (!string.IsNullOrWhiteSpace(prompt)) builder = builder.WithPrompt(prompt);
+                    if (options.TranslateToEnglish) builder = builder.WithTranslate();
                     await using var processor = builder.Build();
                     var sb = new StringBuilder();
                     string? detected = null;
@@ -508,7 +511,7 @@ public sealed class Transcriber : IDisposable
                 var (text, heard) = await Pass(requested);
                 string? language = requested == "auto" ? ToLanguageCode(heard) : requested;
                 string retry = "";
-                if (NeedsDetector && OneOfUserLanguages(language) == null)
+                if (NeedsDetector && !options.AnyLanguage && OneOfUserLanguages(language) == null)
                 {
                     // Heard neither of the user's languages: write it again in the main one.
                     retry = $" heard={language ?? "none"} retry={watch.ElapsedMilliseconds}ms";
@@ -522,14 +525,14 @@ public sealed class Transcriber : IDisposable
         finally { _gate.Release(); }
     }
 
-    private async Task<(string Text, string? Language)> TranscribeCloudAsync(float[] samples, string prompt, CancellationToken ct)
+    private async Task<(string Text, string? Language)> TranscribeCloudAsync(float[] samples, string prompt, CancellationToken ct, bool anyLanguage = false)
     {
         var key = Secret.Unprotect(_settings.CloudSttKeyProtected);
         if (string.IsNullOrEmpty(key)) throw new InvalidOperationException("Cloud transcription needs an API key (Settings).");
 
         byte[] wav = AudioRecorder.ToWav(samples);
         // With two languages the cloud model listens first and only gets the main language forced on it if it heard neither.
-        string requested = NeedsDetector ? "auto" : _settings.Language;
+        string requested = NeedsDetector || anyLanguage ? "auto" : _settings.Language;
 
         // The shared client allows 30 minutes (model downloads); a transcription must fail much sooner.
         double audioSeconds = samples.Length / (double)AudioRecorder.SampleRate;
@@ -569,7 +572,7 @@ public sealed class Transcriber : IDisposable
                 var json = await Http.ReadJsonAsync(response);
                 string text = (json["text"]?.GetValue<string>() ?? "").Trim();
                 heard = auto ? ToLanguageCode(json["language"]?.GetValue<string>()) : requested;
-                if (!NeedsDetector || OneOfUserLanguages(heard) != null) return (text, heard);
+                if (!NeedsDetector || anyLanguage || OneOfUserLanguages(heard) != null) return (text, heard);
             }
 
             // Heard neither of the user's languages (or could not say): write it again in the main language.
