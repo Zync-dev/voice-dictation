@@ -27,8 +27,26 @@ public partial class App : Application
     public int StartPage { get; private set; }
     public ImageSource? AppIcon { get; private set; }
 
+    [System.Runtime.InteropServices.DllImport("ucrtbase.dll", CharSet = System.Runtime.InteropServices.CharSet.Ansi)]
+    private static extern int _putenv_s(string name, string value);
+
+    /// <summary>
+    /// Without Resizable BAR, whisper's Vulkan backend puts its working memory in a small slow window of video memory
+    /// and runs 5-15x slower (measured on an RX 9070 XT: a full window 2.4 s → 0.17 s). Telling it not to use that
+    /// window costs nothing when Resizable BAR is on. Must happen before the speech library loads.
+    /// </summary>
+    private static void TuneGraphicsBackend()
+    {
+        const string name = "GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM";
+        if (Environment.GetEnvironmentVariable(name) != null) return; // a user's own choice wins
+        Environment.SetEnvironmentVariable(name, "1");
+        // The native library reads the C runtime's copy of the environment, which SetEnvironmentVariable does not update.
+        try { _putenv_s(name, "1"); } catch (Exception ex) { Log.Write("Could not tune the graphics backend: " + ex.Message); }
+    }
+
     protected override void OnStartup(StartupEventArgs e)
     {
+        TuneGraphicsBackend();
         base.OnStartup(e);
 
         if (e.Args.Length == 3 && e.Args[0] == "--eval")
