@@ -106,6 +106,7 @@ public partial class MainWindow : Window
         SoundsBox.IsChecked = S.Sounds;
         RestPillBox.IsChecked = S.ShowRestPill;
         StartupBox.IsChecked = S.LaunchAtStartup;
+        LoadAudioSettings(); // AUDIO
 
         DefaultStyleBox.ItemsSource = Styles.All;
         DefaultStyleBox.SelectedItem = Styles.All.Contains(S.DefaultStyle) ? S.DefaultStyle : Styles.Neutral;
