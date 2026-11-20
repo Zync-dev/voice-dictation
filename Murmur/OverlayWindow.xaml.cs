@@ -19,7 +19,7 @@ namespace Murmur;
 /// </summary>
 public partial class OverlayWindow : Window
 {
-    private enum PillState { Hidden, Rest, Listening, HandsFree, Command, Writing, Info, Result, Rewriting, Error, Translate, Ask, Answer, Confirm }
+    private enum PillState { Hidden, Rest, Listening, HandsFree, Command, Writing, Info, Result, Rewriting, Error, Translate, Ask, Answer, Confirm, Reading }
 
     private const int BarCount = 18;
     /// <summary>The card's width while it carries text, so lines wrap the same way from first word to last.</summary>
@@ -60,10 +60,10 @@ public partial class OverlayWindow : Window
     public event Action<string>? ActionRequested;
 
     /// <summary>True while a short message, the inserted text or a rewrite is on screen.</summary>
-    public bool IsShowingMessage => _state is PillState.Info or PillState.Error or PillState.Result or PillState.Rewriting or PillState.Answer or PillState.Confirm;
+    public bool IsShowingMessage => _state is PillState.Info or PillState.Error or PillState.Result or PillState.Rewriting or PillState.Answer or PillState.Confirm or PillState.Reading;
 
     /// <summary>True while the card holds the inserted text and its keycaps (Esc closes it).</summary>
-    public bool IsShowingResult => _state is PillState.Result or PillState.Rewriting or PillState.Answer or PillState.Confirm;
+    public bool IsShowingResult => _state is PillState.Result or PillState.Rewriting or PillState.Answer or PillState.Confirm or PillState.Reading; // edit-speak: Esc stops reading
 
     /// <summary>True while the card holds an answer from Ask, with its Copy / Insert / Esc keycaps.</summary>
     public bool IsShowingAnswer => _state == PillState.Answer;
@@ -107,6 +107,13 @@ public partial class OverlayWindow : Window
             {
                 e.Handled = true;
                 if (_state == PillState.Confirm && sender is FrameworkElement { Tag: string action }) ActionRequested?.Invoke(action);
+            };
+        // ---- edit-speak: the read-aloud keycaps ----
+        foreach (var key in new[] { ReadSlowerKey, ReadFasterKey, ReadStopKey })
+            key.MouseLeftButtonUp += (sender, e) =>
+            {
+                e.Handled = true;
+                if (_state == PillState.Reading && sender is FrameworkElement { Tag: string action }) ReadingAction?.Invoke(action);
             };
         foreach (var key in new[] { AnswerCopyKey, AnswerInsertKey, AnswerDismissKey })
             key.MouseLeftButtonUp += (sender, e) =>
@@ -329,6 +336,54 @@ public partial class OverlayWindow : Window
         ChoiceKeys.Visibility = Visibility.Visible;
     }
 
+    // ---------- edit-speak: reading aloud ----------
+
+    /// <summary>A read-aloud keycap: "read-slower", "read-faster" or "read-stop".</summary>
+    public event Action<string>? ReadingAction;
+
+    /// <summary>
+    /// Reading aloud: <paramref name="status"/> ("Reading aloud", "Paused") with <paramref name="context"/> (where from, how
+    /// far), the piece being read above it, and the hairline along the bottom as progress (0..1). Called again to update.
+    /// </summary>
+    public void ShowReading(string status, string context, string piece, double progress)
+    {
+        bool entering = _state != PillState.Reading;
+        string text = piece.Replace("\r", "");
+        bool changed = entering || Words.Text != text;
+        if (changed)
+        {
+            Words.BeginAnimation(OpacityProperty, null);
+            Words.Inlines.Clear();
+            Words.Text = text;
+            Words.Foreground = _inkBrush;
+            Words.Opacity = 1;
+            Words.MaxHeight = ResultLines * LineHeight;
+            Words.TextTrimming = TextTrimming.CharacterEllipsis;
+            _liveWords = [];
+            _answering = false;
+        }
+        if (entering || StatusRun.Text != status || ContextRun.Text != context) Enter(PillState.Reading, status, context, Theme.OverlayScript);
+        if (changed) ShowText();
+        CountdownScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        CountdownScale.ScaleX = Math.Clamp(progress, 0.01, 1);
+        Countdown.Opacity = 0.8;
+    }
+
+    /// <summary>The sound bars follow the reading voice (peak level, 0..1).</summary>
+    public void PushReadingLevel(float peak)
+    {
+        if (_state != PillState.Reading) return;
+        double level = Math.Min(1, Math.Sqrt(peak * 1.6));
+        _level = Math.Max(level, _level * 0.75);
+        Array.Copy(_history, 1, _history, 0, BarCount - 1);
+        _history[BarCount - 1] = _level;
+        for (int i = 0; i < BarCount; i++)
+        {
+            double h = Theme.MotionEnabled ? 4 + 22 * Math.Min(1, _history[i] * Envelope(i) * 1.2) : 4 + 12 * Envelope(i);
+            Animate(_bars[i], HeightProperty, h, Theme.DurInstant, null);
+        }
+    }
+
     /// <summary>Hands-free: raised when the card changes state (old, new), so a waiting confirmation knows when it was replaced.</summary>
     public event Action<string, string>? CardStateChanged;
 
@@ -355,7 +410,7 @@ public partial class OverlayWindow : Window
     /// </summary>
     public void NoteOnResult(string text, Note kind, double seconds = 3)
     {
-        if (!IsShowingResult) return;
+        if (!IsShowingResult || _state == PillState.Reading) return; // edit-speak: a note never cuts reading short
         bool error = kind == Note.Error;
         if (_state == PillState.Rewriting) Enter(PillState.Result, "", "", Theme.OverlayScript);
         Animate(Words, OpacityProperty, 1, Theme.DurBase, Theme.EaseOut);
@@ -687,7 +742,9 @@ public partial class OverlayWindow : Window
         AnswerActions.Visibility = answer ? Visibility.Visible : Visibility.Collapsed;
         bool confirm = _state == PillState.Confirm; // Hands-free
         ConfirmActions.Visibility = confirm ? Visibility.Visible : Visibility.Collapsed;
-        _keycapsShown = finish || cancel || actions || answer || confirm;
+        bool reading = _state == PillState.Reading; // edit-speak
+        ReadingActions.Visibility = reading ? Visibility.Visible : Visibility.Collapsed;
+        _keycapsShown = finish || cancel || actions || answer || confirm || reading;
         UpdatePadding();
     }
 
@@ -744,6 +801,7 @@ public partial class OverlayWindow : Window
             PillState.Error => Theme.OverlayDanger,
             PillState.Answer => Theme.OverlayAsk,
             PillState.Confirm => Theme.OverlayCommand,
+            PillState.Reading => Theme.OverlayScript, // edit-speak
             _ => Theme.OverlayLine
         });
         SizeCard();
@@ -751,7 +809,7 @@ public partial class OverlayWindow : Window
         if (same) return; // e.g. download progress text updating: keep the loops running
         StopLoops();
         // The answer card has no tick, so the caret sits right next to its label.
-        Tick.Visibility = state is PillState.Answer or PillState.Confirm ? Visibility.Collapsed : Visibility.Visible;
+        Tick.Visibility = state is PillState.Answer or PillState.Confirm or PillState.Reading ? Visibility.Collapsed : Visibility.Visible;
 
         switch (state)
         {
@@ -823,6 +881,15 @@ public partial class OverlayWindow : Window
                 Animate(Tick, OpacityProperty, 0, Theme.DurQuick, Theme.EaseIn);
                 Animate(_caret, OpacityProperty, 1, Theme.DurQuick, Theme.EaseOut);
                 Animate(Glow, OpacityProperty, 0.3, Theme.DurBase, Theme.EaseOut);
+                break;
+
+            case PillState.Reading:
+                // edit-speak: the bars stay out and move with the voice reading; the caret stays lit.
+                FoldMeter(false, animate: true);
+                Animate(Tick, OpacityProperty, 0, Theme.DurQuick, Theme.EaseIn);
+                Animate(_caret, OpacityProperty, 1, Theme.DurQuick, Theme.EaseOut);
+                Animate(Glow, OpacityProperty, 0.25, Theme.DurBase, Theme.EaseOut);
+                for (int i = 0; i < BarCount; i++) Animate(_bars[i], OpacityProperty, Fade(i), Theme.DurQuick, Theme.EaseOut);
                 break;
 
             case PillState.Rewriting:

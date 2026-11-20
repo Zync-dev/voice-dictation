@@ -11,6 +11,7 @@ Voice dictation for Windows. Hold a hotkey in any app, talk, release - the text 
 | Cancel | **Esc** while recording. |
 | Command mode | Hold **Ctrl + Win + Alt**. With text selected, say what to do with it ("make this shorter"). With nothing selected, ask it to write something. Needs an AI model. |
 | Hands-free commands | In command mode: "svar på mailen …" / "reply to this email …", "opsummer det her" / "summarize this", "hvad vil de have?" / "what do they want?", "lav en to-do-liste". Murmur reads the window in front (UI Automation, else Windows OCR) only when asked, and never sends anything. See below. |
+| Voice editing and read aloud | In command mode: "ret tirsdag til onsdag", "marker sidste sætning", "slet sidste sætning", "gør det mere høfligt", "store bogstaver", "go to the end"; "læs op" / "read the email" with Windows' own Danish and English voices, "stop", "læs hurtigere". See below. |
 | On-device transcription | Whisper runs locally (whisper.cpp). Free, private, offline. Uses the GPU through Vulkan when available. |
 | Cloud transcription (optional) | Any OpenAI-compatible `/audio/transcriptions` API (Groq, OpenAI, ...). |
 | Automatic cleanup | Removes filler words, understands "new line" / "new paragraph", fixes capitalization. |
@@ -282,6 +283,57 @@ Code: `Confirmations.cs` (confirmations, choices, "igen", "send" after a reply, 
 Measured on the development PC: the rule layer takes under 0.1 ms per phrase on average, at worst 3-4 ms for a phrase that uses a pattern for the first time (after the background warm-up at start). The real Start menu list (234 apps) reads in 0.6-1.5 s, in the background at start and again when it is more than 10 minutes old. A click by name in the test window takes 0.3-0.5 s, a scroll about 10 ms plus the card. The AI router picked the right control intent for the five free-form phrases in 0.3-0.6 s each.
 
 Not verified: real Outlook (desktop and new), Outlook on the web, Gmail, Thunderbird, Slack, Teams, Discord, WhatsApp and Messenger were not driven. Their send keys come from their documentation: Outlook desktop may ask once whether Ctrl + Enter should send, and in Gmail Ctrl + Enter sends without keyboard shortcuts switched on. Whether their reply fields expose the draft through UI Automation (needed before "send" sends) is untested, so in some apps "send" may refuse and say the draft is no longer there. Clicking by name in browsers (Chrome, Edge) and in Electron apps depends on their accessibility tree and was not tried. Starting real apps was only checked by name matching against the real list; the only app really started was the test window. Bringing a window to the front can be refused by Windows when another app holds the foreground; the card then says to click it in the taskbar. The full path from the hotkey and microphone through Whisper was not run; the checks call the same command handler with the transcribed phrase.
+
+## Hands-free: voice editing and read aloud
+
+Settings > Voice editing and read aloud. Command mode (hold **Ctrl + Win + Alt** and speak), Danish or English, through the intent router (`edit_text` order 25, `read_aloud` 30, `read_control` 15).
+
+**Voice editing** changes the text in the field that has focus:
+
+| Say | What happens |
+| --- | --- |
+| "Ret tirsdag til onsdag", "skift Peter ud med Mette", "lav fredag om til lørdag", "change Tuesday to Wednesday", "replace X with Y" | The nearest "tirsdag" before the cursor (else the first after it) becomes "onsdag". Whole words, case ignored, the punctuation between words ignored ("kl 10" finds "kl. 10"). The new word takes the old one's case ("Tirsdag" → "Onsdag", "TUESDAY" → "WEDNESDAY"). With text selected, only inside the selection. |
+| "Marker sidste sætning / ord / afsnit / linje", "marker de sidste tre ord", "marker alt", "select the last word / sentence / paragraph", "select the last two words" | Selects it. A sentence ends at . ! ? … followed by a capital letter, so "kl. 10" and "f.eks." do not end one; a cursor inside a sentence takes the whole sentence. |
+| "Slet sidste sætning", "slet de sidste to ord", "slet sidste afsnit", "slet det", "delete the last sentence", "delete that", "scratch that" | Deletes it with the space (or line break) before it. "Slet det" / "delete that" is the selection, else the last dictation. More than 280 characters asks first on the card ("Delete this text?", the text, a **Delete** keycap, Esc; "ja" / "nej" in command mode). |
+| "Gør det mere høfligt / kortere / formelt", "make it more polite / shorter / formal", "rephrase it" | With nothing selected: the last thing Murmur typed into this app (within 30 minutes) is found in the field and rewritten by the AI model. With text selected, command mode as before rewrites the selection. |
+| "Store bogstaver", "små bogstaver", "stort begyndelsesbogstav", "capitalize that", "all caps", "lowercase that", "title case" | The selection, else the last dictation, else the last word. "Capitalize that" means capitals, as "store bogstaver" does. |
+| "Flyt markøren til slutningen / starten", "gå til slutningen af linjen", "go to the end / start", "go to the end of the line" | Moves the cursor. |
+
+With **Computer control** on as well, "marker alt" / "select all" goes to computer control (Ctrl + A, which also works in lists and web pages), and "til toppen / bunden", "go to the top / bottom" scroll the window (in a text field that ends as Ctrl + Home / End). With computer control off, voice editing handles them in the text field.
+
+How (`VoiceEdit.cs` understands and plans, `VoiceEditField.cs` does it):
+
+1. **UI Automation** when the field tells where its cursor is (a text pattern with a selection; checked in WPF and WinForms text boxes, a rich edit box and an Edge text area, and expected to work the same in other Windows edit boxes, Chromium text areas and Word). The range is selected through UI Automation by character count, or, where a field counts characters differently (Edge), by finding the text itself (the same occurrence); the selection is read back and must be exactly the expected text. Then a word or line is typed (Unicode key events, no clipboard), longer text is pasted, or Delete removes it. The field is read again and must equal the expected text exactly; if nothing arrived at all it is tried once more.
+2. **Keys** when there is no such field: Ctrl + Shift + Home and Ctrl + C read the text before the cursor, Ctrl + Home and Right / Shift + Right select the range (at most 3,000 steps), Ctrl + C checks the selection is exactly that, then type, paste or Delete. A classic edit box moves its cursor one step on an arrow key instead of folding a selection, so every move starts from Ctrl + Home.
+3. Otherwise the card says so ("Click into a text field in Notepad first.", "Could not find “fredag” in the text.", "Murmur could not select the text in … Nothing was changed.") and nothing is typed.
+
+Every change is one typing, paste or Delete, so **Ctrl + Z takes it back**. Before reading and again before every key: the app in front must be the one the command was about, not excluded, not a terminal and not Murmur, and the focused field not a password field. A voice edit does not count as a correction for the learner.
+
+**Read aloud** with Windows' own voices (`Windows.Media.SpeechSynthesis`), on this PC; nothing is sent anywhere:
+
+| Say | What happens |
+| --- | --- |
+| "Læs op", "læs det her op", "læs mailen op", "kan du læse mailen højt?", "read this aloud", "read it out loud", "read the email", "read me the email" | The selection, else the main content of the window in front (the open mail, page or document, read by the foundation's window reader: "Reading Outlook…", never excluded apps or with a password field focused). |
+| "Stop", "stop reading", "stop med at læse", "hold op" | Stops. Bare "stop" only while reading. Esc and the card's **Esc** keycap stop it too. |
+| "Læs langsommere / hurtigere", "read slower / faster", "fortsæt", "continue" | Speed 0.8× or 1.25× (0.5× to 3×), kept in Settings; applies from the next sentence. |
+
+- The text is read a sentence or two at a time (at most 300 characters; the next piece is synthesised while one plays, about 50-200 ms each). Each paragraph is read by the voice of its language: Danish or English told from the text itself, else the main language. Settings chooses a voice per language ("Automatic" takes the Windows default when it speaks that language, else the first that does), lists the voices Windows has, and **Test the voices** plays a Danish and an English sentence.
+- The card shows "Reading aloud", where from, piece n/m and the speed, the sentence being read, the progress along its bottom hairline, the sound bars moving with the voice (in `overlay-script`: text turned into sound; orange `voice` stays the microphone), and **Slower**, **Faster** and **Esc** keycaps.
+- Starting a recording pauses reading, so the microphone does not hear it; the command that follows can answer it ("stop", "læs hurtigere", "fortsæt"). Anything else taking the card (a dictation, another command, a message) stops it.
+- On this PC: Microsoft Helle (Danish) and Microsoft David, Zira and Mark (English). Without a Danish voice the card says "no Danish voice" and another voice reads it.
+
+Code: `VoiceEdit.cs`, `VoiceEditField.cs`, `ReadAloud.cs`, `EditSpeakIntents.cs`, `DictationController.EditSpeak.cs`, `MainWindow.EditSpeak.cs`, `EditSpeakTests.cs`; small additions to `OverlayWindow.xaml(.cs)` (the Reading state), `Settings.cs`, `DictationController.cs`, `DictationController.HandsFree.cs`, `MainWindow.xaml(.cs)` and `App.xaml.cs`.
+
+Developer switches (run with `MURMUR_DATA_DIR` set):
+
+| Switch | What it does |
+| --- | --- |
+| `--edittest out.txt` | The phrase table (Danish and English edit and read-aloud phrases, and phrases that must stay ordinary commands, plus the foundation's whole router table unchanged), the planner on fixed texts, then every edit command in its own test windows (`--edithost`, another process: a WPF text box, a WinForms text box, a rich edit box, a password box) by UI Automation and by keys only, each result checked exactly (text and selection); a password field, an excluded app and a window not in front (nothing typed); a big deletion waiting for "ja"; the last dictation rewritten by the AI model (2 calls; `MURMUR_EDITTEST_AI=0` skips them); and an Edge text area with a throw-away profile under the data folder (`MURMUR_EDITTEST_BROWSER=0` skips it). It only acts while its own window is in front and retries or skips otherwise |
+| `--speaktest folder out.txt` | Lists the voices, writes Danish and English samples (and English at 1.5× and 0.8×) as WAV files in the folder without playing them, with timings and lengths, then drives the read-aloud card with a silent player: pausing for a recording, "læs hurtigere", Esc, "stop", another dictation, "læs mailen op" on the hands-free test mail window, and an excluded app. `MURMUR_SHOTS=folder` saves the cards |
+| `--editspeak-demo[=folder]` | Plays the new card states (reading, faster, edit notes, the delete question, a refusal); with a folder, saves each as a PNG and quits |
+| `--show-editspeak` | Opens Settings scrolled to this section (with `--page=5`) |
+
+Not verified: real Outlook, Word, Gmail, Slack, Teams, Notepad (Windows 11), VS Code and other editors were not driven, only the test windows and a plain Edge text area; rich web editors (Gmail's compose box, Google Docs, contenteditable) and Electron apps may expose their text differently, in which case the card says it cannot select the text, or keys mode is used. Keys mode briefly uses the clipboard (restored after). Read aloud was checked with a silent player and WAV files: real playback through the speakers (NAudio `WaveOut`, also used by Settings' **Test the voices**) was never run by the checks, which do not play audio.
 
 ## Sound clean-up and hands-free auto-stop
 

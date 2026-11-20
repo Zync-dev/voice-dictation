@@ -19,6 +19,7 @@ public sealed partial class DictationController
                 _last = new Insertion { Text = text, Typed = text, Window = window, App = app };
                 _history.Add(new HistoryEntry { Time = DateTime.Now, Text = text, Raw = "", App = app, Mode = "Command", Words = HistoryStore.CountWords(text) });
                 _assist.AfterPaste(text, window);
+                NoteTypedForEditing(text, window); // edit-speak
             });
         // Computer control: reads the Start menu's app list once in the background, for "åbn Slack" (ComputerControl.cs).
         if (_settings.ControlCommands) AppCatalog.WarmUp();

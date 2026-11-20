@@ -114,6 +114,7 @@ public sealed partial class DictationController
         };
         overlay.ActionRequested += action => _ = OnCardActionAsync(action);
         InitHandsFree(); // Hands-free: the intent router for command mode (DictationController.HandsFree.cs)
+        InitEditSpeak(); // edit-speak: voice editing and read aloud (DictationController.EditSpeak.cs)
     }
 
     /// <summary>Called at startup and when the model setting changes: download + load in the background.</summary>
@@ -360,6 +361,7 @@ public sealed partial class DictationController
             var target = Native.GetForegroundWindow();
             await TextInjector.PasteAsync(toInsert, _settings.RestoreClipboard);
             _last = new Insertion { Text = text, Typed = toInsert, Window = target, App = context.Process };
+            NoteTypedForEditing(text, target); // edit-speak
             _overlay.ShowResult(text, context.Process, _processor.CanRewrite, mode == HotkeyKind.Translate ? "Translated" : "Inserted");
             _assist.AfterPaste(toInsert, target); // Learning and context: watch for corrections
             // One line per dictation, so a slow one can be traced to its cause.
@@ -520,6 +522,7 @@ public sealed partial class DictationController
             _assist.AfterPaste(typed, last.Window); // Learning and context
             last.Text = text;
             last.Typed = typed;
+            NoteTypedForEditing(text, last.Window); // edit-speak
             _overlay.ShowResult(text, last.App, _processor.CanRewrite, how switch
             {
                 "shorter" => "Made shorter",

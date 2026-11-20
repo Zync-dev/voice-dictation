@@ -195,6 +195,21 @@
                             </Border>
                         </StackPanel>
 
+                        <!-- edit-speak: reading aloud. Speed keycaps, then Esc to stop. -->
+                        <StackPanel x:Name="ReadingActions" DockPanel.Dock="Right" Orientation="Horizontal" Margin="18,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
+                            <Border x:Name="ReadSlowerKey" Tag="read-slower" Style="{StaticResource PillKey}" ToolTip="Read slower">
+                                <TextBlock Style="{StaticResource PillKeyText}" Text="Slower"/>
+                            </Border>
+                            <Border x:Name="ReadFasterKey" Tag="read-faster" Style="{StaticResource PillKey}" Margin="6,0,0,0" ToolTip="Read faster">
+                                <TextBlock Style="{StaticResource PillKeyText}" Text="Faster"/>
+                            </Border>
+                            <Rectangle Style="{StaticResource PillKeyGap}"/>
+                            <Border x:Name="ReadStopKey" Tag="read-stop" Style="{StaticResource PillKey}" ToolTip="Stop reading">
+                                <TextBlock Style="{StaticResource PillKeyText}" Text="Esc"/>
+                            </Border>
+                            <TextBlock Style="{StaticResource PillKeyHint}" Text="stop"/>
+                        </StackPanel>
+
                         <TextBlock x:Name="Timer" DockPanel.Dock="Right" Margin="18,0,0,0" FontFamily="{StaticResource FontMono}" FontSize="12" Foreground="#93A9AC" VerticalAlignment="Center"/>
 
                         <!-- Last, so the keycaps keep their room and a long status line is trimmed instead. -->
