@@ -588,6 +588,70 @@
                 </Border>
                 <!-- ==== end Hands-free (foundation) ==== -->
 
+                <!-- ==== Voice editing and read aloud (edit-speak): MainWindow.EditSpeak.cs ==== -->
+                <TextBlock x:Name="EditSpeakHeading" Style="{StaticResource SectionHeading}" Text="Voice editing and read aloud"/>
+                <Border Style="{StaticResource SettingsCard}">
+                    <StackPanel>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Edit text by voice"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="In command mode, say “ret tirsdag til onsdag”, “marker sidste sætning”, “slet sidste sætning”, “gør det mere høfligt”, “store bogstaver” or “flyt markøren til slutningen”. In English: “change Tuesday to Wednesday”, “select the last word”, “delete the last sentence”, “make it shorter”, “capitalize that”, “go to the end”. Ctrl + Z takes each change back. Never in password fields."/>
+                            </StackPanel>
+                            <CheckBox x:Name="VoiceEditingBox" Grid.Column="1" Click="EditSpeakSetting_Changed" AutomationProperties.Name="Edit text by voice"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Read aloud"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="In command mode, say “læs op” or “read this aloud” for the selected text, else the window in front, or “læs mailen op” / “read the email”. “Stop”, Esc or the card’s keycap stops it; “læs langsommere” / “read faster” change the speed. Windows’ own voices, on this PC."/>
+                            </StackPanel>
+                            <CheckBox x:Name="ReadAloudBox" Grid.Column="1" Click="EditSpeakSetting_Changed" AutomationProperties.Name="Read aloud"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Danish voice"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="For Danish text."/>
+                            </StackPanel>
+                            <ComboBox x:Name="VoiceDanishBox" Grid.Column="1" VerticalAlignment="Center" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                      SelectionChanged="EditSpeakSetting_Changed" AutomationProperties.Name="Danish voice"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="English voice"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="For English text. Murmur tells the two apart from the text itself."/>
+                            </StackPanel>
+                            <ComboBox x:Name="VoiceEnglishBox" Grid.Column="1" VerticalAlignment="Center" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                      SelectionChanged="EditSpeakSetting_Changed" AutomationProperties.Name="English voice"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Reading speed"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="“Læs hurtigere” and “read slower” change it too."/>
+                            </StackPanel>
+                            <ComboBox x:Name="ReadSpeedBox" Grid.Column="1" VerticalAlignment="Center" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                      SelectionChanged="EditSpeakSetting_Changed" AutomationProperties.Name="Reading speed"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Voices on this PC"/>
+                                <TextBlock x:Name="VoicesHelp" Style="{StaticResource RowHelp}" Text="Add more under Windows Settings › Time &amp; language › Speech."/>
+                            </StackPanel>
+                            <Button x:Name="TestVoicesButton" Grid.Column="1" Style="{StaticResource BtnGhost}" VerticalAlignment="Center" Content="Test the voices" Click="TestVoices_Click"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+                <!-- ==== end Voice editing and read aloud ==== -->
+
                 <!-- Microphone and language -->
                 <TextBlock Style="{StaticResource SectionHeading}" Text="Microphone and language"/>
                 <Border Style="{StaticResource SettingsCard}">

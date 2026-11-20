@@ -209,6 +209,21 @@ public class AppSettings
 
     // ---- end Hands-free (foundation) ----
 
+    // ---- Voice editing and read aloud (edit-speak) ----
+
+    /// <summary>Command mode edits the focused field: "ret tirsdag til onsdag", "slet sidste sætning", "go to the end".</summary>
+    public bool VoiceEditing { get; set; } = true;
+    /// <summary>Command mode reads aloud: "læs op", "read the email", with Windows' own voices on this PC.</summary>
+    public bool ReadAloudEnabled { get; set; } = true;
+    /// <summary>The voice for Danish text (a Windows voice id); empty picks one.</summary>
+    public string ReadAloudVoiceDanish { get; set; } = "";
+    /// <summary>The voice for English text (a Windows voice id); empty picks one.</summary>
+    public string ReadAloudVoiceEnglish { get; set; } = "";
+    /// <summary>Reading speed: 1 is the voice's normal speed (0.5 to 3).</summary>
+    public double ReadAloudRate { get; set; } = 1.0;
+
+    // ---- end Voice editing and read aloud ----
+
     // ---- persistence ----
 
     /// <summary>The real data folder; speech models always live here so test runs do not download them again.</summary>

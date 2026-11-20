@@ -116,6 +116,7 @@ public partial class MainWindow : Window
         LoadLearningSettings(); // Learning and context (MainWindow.Learning.cs)
         InitModesSection(); // Modes and voice commands (MainWindow.Modes.cs)
         LoadHandsFreeSettings(); // Hands-free (MainWindow.HandsFree.cs)
+        LoadEditSpeakSettings(); // edit-speak: voice editing and read aloud (MainWindow.EditSpeak.cs)
         LoadDeveloperSettings(); // ---- Developer mode (MainWindow.DevMode.cs) ----
 
         _loading = false;

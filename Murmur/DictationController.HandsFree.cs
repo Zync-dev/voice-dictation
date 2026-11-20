@@ -19,6 +19,7 @@ public sealed partial class DictationController
                 _last = new Insertion { Text = text, Typed = text, Window = window, App = app };
                 _history.Add(new HistoryEntry { Time = DateTime.Now, Text = text, Raw = "", App = app, Mode = "Command", Words = HistoryStore.CountWords(text) });
                 _assist.AfterPaste(text, window);
+                NoteTypedForEditing(text, window); // edit-speak
             });
         // Finds the intents and parses their rules once in the background, so the first command pays nothing for it.
         _ = Task.Run(() => IntentRouter.MatchRules(IntentRequest.From("warm up", "", null, new ActiveWindowInfo("unknown", ""), _settings)));
