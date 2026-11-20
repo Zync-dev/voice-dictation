@@ -114,6 +114,7 @@ public partial class MainWindow : Window
         DataPathText.Text = "Settings, history and speech models are stored in " + AppSettings.DataDir;
 
         _loading = false;
+        InitSetupSection(); // installer, updates and first run (MainWindow.Setup.cs)
         RefreshHotkeys();
         RefreshEnginePanels();
         SecondLanguagePanel.Visibility = S.Language == "auto" ? Visibility.Collapsed : Visibility.Visible;

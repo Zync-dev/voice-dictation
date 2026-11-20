@@ -11,6 +11,10 @@
     <AssemblyName>Murmur</AssemblyName>
     <Version>1.0.0</Version>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- Installer and updates (Velopack): Program.Main runs Velopack's hooks before WPF starts. -->
+    <StartupObject>Murmur.Program</StartupObject>
+    <!-- Written by Murmur.exe with the write-icon switch (see README), from the same drawing as the window icon. -->
+    <ApplicationIcon>Assets\murmur.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -27,6 +31,7 @@
   <ItemGroup>
     <PackageReference Include="NAudio" Version="3.3.0" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="11.0.0" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
     <PackageReference Include="Whisper.net" Version="1.9.1" />
     <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
     <PackageReference Include="Whisper.net.Runtime.Vulkan" Version="1.9.1" />
