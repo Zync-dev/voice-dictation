@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Topmost="True" ShowInTaskbar="False" ShowActivated="False" Focusable="False"
-        ResizeMode="NoResize" Width="760" Height="280"
+        ResizeMode="NoResize" Width="760" Height="380"
         FontFamily="{StaticResource FontBody}" UseLayoutRounding="True"
         Title="Murmur dictation pill">
     <!--
@@ -53,6 +53,28 @@
             <Setter Property="Opacity" Value="0.5"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
+        <!-- Modes and voice commands: a thin scroll bar for a long answer from Ask, in overlay-line. -->
+        <Style x:Key="PillScrollBar" TargetType="ScrollBar">
+            <Setter Property="Width" Value="6"/>
+            <Setter Property="MinWidth" Value="6"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Track x:Name="PART_Track" IsDirectionReversed="True">
+                            <Track.Thumb>
+                                <Thumb>
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Border CornerRadius="3" Background="#56727D" Opacity="0.8"/>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                        </Track>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid>
@@ -82,8 +104,14 @@
 
                     <!-- The words so far while you speak; what was inserted afterwards. Grows upwards. -->
                     <Border x:Name="TextHost" Height="0" Padding="0,17,8,0" ClipToBounds="True" VerticalAlignment="Top">
-                        <TextBlock x:Name="Words" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight"
-                                   TextWrapping="Wrap" VerticalAlignment="Top" Foreground="#93A9AC"/>
+                        <!-- Scrolls only for a long answer from Ask; everything else fits its lines. -->
+                        <ScrollViewer x:Name="TextScroll" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Focusable="False" CanContentScroll="False">
+                            <ScrollViewer.Resources>
+                                <Style TargetType="ScrollBar" BasedOn="{StaticResource PillScrollBar}"/>
+                            </ScrollViewer.Resources>
+                            <TextBlock x:Name="Words" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight"
+                                       TextWrapping="Wrap" VerticalAlignment="Top" HorizontalAlignment="Left" Foreground="#93A9AC"/>
+                        </ScrollViewer>
                     </Border>
 
                     <DockPanel x:Name="MainRow" Grid.Row="1" Height="56" LastChildFill="False">
@@ -104,7 +132,7 @@
                                 <Border x:Name="StopButton" Style="{StaticResource PillKey}" ToolTip="Finish and insert">
                                     <TextBlock x:Name="FinishKeys" Style="{StaticResource PillKeyText}"/>
                                 </Border>
-                                <TextBlock Style="{StaticResource PillKeyHint}" Text="insert"/>
+                                <TextBlock x:Name="FinishHint" Style="{StaticResource PillKeyHint}" Text="insert"/>
                             </StackPanel>
                             <StackPanel x:Name="CancelGroup" Orientation="Horizontal">
                                 <Border x:Name="CloseButton" Style="{StaticResource PillKey}" ToolTip="Cancel">
@@ -136,6 +164,20 @@
                             </StackPanel>
                             <Rectangle Style="{StaticResource PillKeyGap}"/>
                             <Border x:Name="DismissKey" Tag="close" Style="{StaticResource PillKey}" ToolTip="Close">
+                                <TextBlock Style="{StaticResource PillKeyText}" Text="Esc"/>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- Modes and voice commands: the answer from Ask, which is shown and not typed. -->
+                        <StackPanel x:Name="AnswerActions" DockPanel.Dock="Right" Orientation="Horizontal" Margin="18,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
+                            <Border x:Name="AnswerCopyKey" Tag="answer-copy" Style="{StaticResource PillKey}" ToolTip="Copy the answer">
+                                <TextBlock Style="{StaticResource PillKeyText}" Text="Copy"/>
+                            </Border>
+                            <Border x:Name="AnswerInsertKey" Tag="answer-insert" Style="{StaticResource PillKey}" Margin="6,0,0,0" ToolTip="Type the answer into the app you are in">
+                                <TextBlock Style="{StaticResource PillKeyText}" Text="Insert"/>
+                            </Border>
+                            <Rectangle Style="{StaticResource PillKeyGap}"/>
+                            <Border x:Name="AnswerDismissKey" Tag="close" Style="{StaticResource PillKey}" ToolTip="Close">
                                 <TextBlock Style="{StaticResource PillKeyText}" Text="Esc"/>
                             </Border>
                         </StackPanel>

@@ -106,6 +106,20 @@ public class AppSettings
     public ObservableCollection<Snippet> Snippets { get; set; } = [];
     public ObservableCollection<AppStyleRule> AppStyles { get; set; } = [];
 
+    // ---- Modes and voice commands ----
+
+    /// <summary>
+    /// Hold to speak in any language and have it written in <see cref="TranslateTarget"/>. Default Ctrl+Win+T: hold the
+    /// dictation keys, then add T. Ctrl+Win+T is not a Windows or Game Bar shortcut.
+    /// </summary>
+    public List<int> TranslateHotkey { get; set; } = [0x11, 0x5B, 0x54];
+    /// <summary>Hold to ask a question out loud; the answer appears on the dictation card. Default Ctrl+Win+A (not a Windows shortcut).</summary>
+    public List<int> AskHotkey { get; set; } = [0x11, 0x5B, 0x41];
+    /// <summary>The language Translate writes in (ISO code). Speech already in this language is written in the main language instead.</summary>
+    public string TranslateTarget { get; set; } = "en";
+    /// <summary>Spoken commands while dictating: "ny linje", "punkt", "slet det", "komma" and their English versions.</summary>
+    public bool VoiceCommands { get; set; } = true;
+
     // ---- persistence ----
 
     /// <summary>The real data folder; speech models always live here so test runs do not download them again.</summary>

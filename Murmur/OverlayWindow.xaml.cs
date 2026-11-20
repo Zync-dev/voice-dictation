@@ -19,7 +19,7 @@ namespace Murmur;
 /// </summary>
 public partial class OverlayWindow : Window
 {
-    private enum PillState { Hidden, Rest, Listening, HandsFree, Command, Writing, Info, Result, Rewriting, Error }
+    private enum PillState { Hidden, Rest, Listening, HandsFree, Command, Writing, Info, Result, Rewriting, Error, Translate, Ask, Answer }
 
     private const int BarCount = 18;
     /// <summary>The card's width while it carries text, so lines wrap the same way from first word to last.</summary>
@@ -60,12 +60,15 @@ public partial class OverlayWindow : Window
     public event Action<string>? ActionRequested;
 
     /// <summary>True while a short message, the inserted text or a rewrite is on screen.</summary>
-    public bool IsShowingMessage => _state is PillState.Info or PillState.Error or PillState.Result or PillState.Rewriting;
+    public bool IsShowingMessage => _state is PillState.Info or PillState.Error or PillState.Result or PillState.Rewriting or PillState.Answer;
 
     /// <summary>True while the card holds the inserted text and its keycaps (Esc closes it).</summary>
-    public bool IsShowingResult => _state is PillState.Result or PillState.Rewriting;
+    public bool IsShowingResult => _state is PillState.Result or PillState.Rewriting or PillState.Answer;
 
-    private bool IsLive => _state is PillState.Listening or PillState.HandsFree or PillState.Command;
+    /// <summary>True while the card holds an answer from Ask, with its Copy / Insert / Esc keycaps.</summary>
+    public bool IsShowingAnswer => _state == PillState.Answer;
+
+    private bool IsLive => _state is PillState.Listening or PillState.HandsFree or PillState.Command or PillState.Translate or PillState.Ask;
 
     public OverlayWindow()
     {
@@ -97,6 +100,12 @@ public partial class OverlayWindow : Window
                 e.Handled = true;
                 if (_state == PillState.Result && sender is FrameworkElement { Tag: string action }) ActionRequested?.Invoke(action);
                 else if (_state == PillState.Rewriting && sender == DismissKey) ActionRequested?.Invoke("close");
+            };
+        foreach (var key in new[] { AnswerCopyKey, AnswerInsertKey, AnswerDismissKey })
+            key.MouseLeftButtonUp += (sender, e) =>
+            {
+                e.Handled = true;
+                if (_state == PillState.Answer && sender is FrameworkElement { Tag: string action }) ActionRequested?.Invoke(action);
             };
 
         // The inserted text waits while the pointer is on the card.
@@ -135,11 +144,18 @@ public partial class OverlayWindow : Window
         string app = Pretty(context.Process);
         var settings = ((App)Application.Current).Settings;
         string style = settings.StyleFor(context.Process);
-        string where = $"  {app}" + (style == Styles.Neutral || command ? "" : $" · {style}");
-        FinishKeys.Text = HotkeyService.Describe(command ? settings.CommandHotkey : settings.DictateHotkey).Replace(" + ", "+");
-        Enter(command ? PillState.Command : handsFree ? PillState.HandsFree : PillState.Listening,
-            command ? "Say what to do" : "Listening", where,
-            command ? Theme.OverlayCommand : Theme.OverlayVoice);
+        string where = $"  {app}" + (style == Styles.Neutral || mode != HotkeyKind.Dictate ? "" : $" · {style}");
+        FinishKeys.Text = HotkeyService.Describe(HotkeyService.ComboFor(settings, mode)).Replace(" + ", "+");
+        FinishHint.Text = mode == HotkeyKind.Ask ? "ask" : "insert";
+        // ---- Modes and voice commands: Translate and Ask each have their own colour ----
+        if (mode == HotkeyKind.Translate)
+            Enter(PillState.Translate, Modes.TranslateLabel(settings), where, Theme.OverlayTranslate);
+        else if (mode == HotkeyKind.Ask)
+            Enter(PillState.Ask, "Ask a question", "", Theme.OverlayAsk);
+        else
+            Enter(command ? PillState.Command : handsFree ? PillState.HandsFree : PillState.Listening,
+                command ? "Say what to do" : "Listening", where,
+                command ? Theme.OverlayCommand : Theme.OverlayVoice);
         if (fresh) ClearText(); // a new recording starts with no words, whatever the card held before
     }
 
@@ -167,6 +183,7 @@ public partial class OverlayWindow : Window
         Words.Opacity = 1;
         Words.MaxHeight = double.PositiveInfinity;
         Words.TextTrimming = TextTrimming.None;
+        _answering = false;
         Words.Inlines.Clear();
         if (stable.Length > 0) Words.Inlines.Add(new Run(added.Length > 0 ? stable + " " : stable) { Foreground = _mutedBrush });
         if (added.Length > 0)
@@ -200,13 +217,51 @@ public partial class OverlayWindow : Window
         Words.MaxHeight = ResultLines * LineHeight;
         Words.TextTrimming = TextTrimming.CharacterEllipsis;
         _liveWords = [];
+        _answering = false;
         RewriteKeys.Visibility = canRewrite ? Visibility.Visible : Visibility.Collapsed;
-        // "Inserted into Slack"; a rewrite says only what it did ("Made shorter"), the app is the same.
-        Enter(PillState.Result, status, status == "Inserted" ? $"  into {Pretty(app)}" : "", Theme.OverlayScript);
+        // "Inserted into Slack", "Translated into Slack"; a rewrite says only what it did ("Made shorter"), the app is the same.
+        Enter(PillState.Result, status, status is "Inserted" or "Translated" ? $"  into {Pretty(app)}" : "", Theme.OverlayScript);
         if (Theme.MotionEnabled)
             Words.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, new Duration(Theme.DurBase)) { EasingFunction = Theme.EaseOut });
         ShowText();
         CloseAfter(ResultTime);
+    }
+
+    // ---------- Modes and voice commands: the answer from Ask ----------
+
+    /// <summary>Lines of an answer shown at once; a longer one scrolls.</summary>
+    private const int AnswerLines = 8;
+    private bool _answering;
+
+    /// <summary>
+    /// The answer to a spoken question, on the card instead of at the cursor. It scrolls when long, stays while the
+    /// pointer is on it, and has keycaps to copy it or type it into the app (Insert); Esc closes it.
+    /// </summary>
+    public void ShowAnswer(string answer, string question)
+    {
+        Words.BeginAnimation(OpacityProperty, null);
+        Words.Inlines.Clear();
+        Words.Text = answer.Replace("\r", "").Replace("\n\n", "\n");
+        Words.Foreground = _inkBrush;
+        Words.MaxHeight = double.PositiveInfinity;
+        Words.TextTrimming = TextTrimming.None;
+        _liveWords = [];
+        _answering = true;
+        string asked = question.Length > 38 ? question[..37].TrimEnd() + "…" : question;
+        Enter(PillState.Answer, "Answer", $"  “{asked}”", Theme.OverlayAsk);
+        if (Theme.MotionEnabled)
+            Words.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, new Duration(Theme.DurBase)) { EasingFunction = Theme.EaseOut });
+        ShowText();
+        TextScroll.ScrollToTop();
+        int words = answer.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+        CloseAfter(TimeSpan.FromSeconds(Math.Clamp(8 + words * 0.35, 10, 60)));
+    }
+
+    /// <summary>For --modes-demo: scrolls a long answer as the mouse wheel would. Returns how far it can scroll in all.</summary>
+    internal double ScrollAnswerBy(double pixels)
+    {
+        TextScroll.ScrollToVerticalOffset(TextScroll.VerticalOffset + pixels);
+        return TextScroll.ScrollableHeight;
     }
 
     /// <summary>A rewrite of the inserted text is being written.</summary>
@@ -291,12 +346,24 @@ public partial class OverlayWindow : Window
         UpdatePadding();
         SizeCard();
         Words.Height = double.NaN;
+        Words.Width = double.NaN;
         Words.Measure(new Size(TextWidth, double.PositiveInfinity));
         double words = Math.Ceiling(Words.DesiredSize.Height);
+        double shown = words;
+        bool scrolls = _answering && words > AnswerLines * LineHeight + 0.5;
+        if (scrolls)
+        {
+            // A long answer: room for the thin scroll bar, and only the first lines on show.
+            Words.Width = TextWidth - 14;
+            Words.Measure(new Size(Words.Width, double.PositiveInfinity));
+            words = Math.Ceiling(Words.DesiredSize.Height);
+            shown = AnswerLines * LineHeight;
+        }
+        TextScroll.VerticalScrollBarVisibility = scrolls ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
         // Its own height, so the text is laid out in full at once and the growing area only uncovers it
         // (otherwise the last line would be trimmed while the card grows).
         Words.Height = words;
-        double height = TextHost.Padding.Top + words;
+        double height = TextHost.Padding.Top + shown;
         Animate(TextHost, HeightProperty, height, Theme.DurExpand, Theme.EaseOut);
     }
 
@@ -381,6 +448,8 @@ public partial class OverlayWindow : Window
         TextHost.BeginAnimation(HeightProperty, null);
         TextHost.Height = 0;
         Words.Inlines.Clear();
+        _answering = false;
+        TextScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
         FoldMeter(false, animate: false);
     }
 
@@ -400,7 +469,7 @@ public partial class OverlayWindow : Window
 
     private void PauseClose()
     {
-        if (_state != PillState.Result || !_returnTimer.IsEnabled) return;
+        if (_state is not (PillState.Result or PillState.Answer) || !_returnTimer.IsEnabled) return;
         _returnTimer.Stop();
         _closeLeft = _closesAt - DateTime.UtcNow;
         double scale = CountdownScale.ScaleX;
@@ -410,7 +479,7 @@ public partial class OverlayWindow : Window
 
     private void ResumeClose()
     {
-        if (_state != PillState.Result || _returnTimer.IsEnabled) return;
+        if (_state is not (PillState.Result or PillState.Answer) || _returnTimer.IsEnabled) return;
         // Leaving the card always gives a moment to read before it closes.
         var left = _closeLeft < TimeSpan.FromSeconds(1.5) ? TimeSpan.FromSeconds(1.5) : _closeLeft;
         _closesAt = DateTime.UtcNow + left;
@@ -503,7 +572,9 @@ public partial class OverlayWindow : Window
         CancelGroup.Visibility = cancel ? Visibility.Visible : Visibility.Collapsed;
         Buttons.Visibility = finish || cancel ? Visibility.Visible : Visibility.Collapsed;
         Actions.Visibility = actions ? Visibility.Visible : Visibility.Collapsed;
-        _keycapsShown = finish || cancel || actions;
+        bool answer = _state == PillState.Answer;
+        AnswerActions.Visibility = answer ? Visibility.Visible : Visibility.Collapsed;
+        _keycapsShown = finish || cancel || actions || answer;
         UpdatePadding();
     }
 
@@ -526,11 +597,11 @@ public partial class OverlayWindow : Window
         bool live = IsLive;
         bool result = state is PillState.Result or PillState.Rewriting;
         // While holding the hotkey, releasing it inserts; hands-free and command mode show the key that finishes.
-        SetChrome(text: true, timer: live, finish: state is PillState.HandsFree or PillState.Command, cancel: live, actions: result);
+        SetChrome(text: true, timer: live, finish: state is PillState.HandsFree or PillState.Command or PillState.Translate or PillState.Ask, cancel: live, actions: result);
         if (live) { UpdateClock(); _clock.Start(); } else _clock.Stop();
         Actions.IsHitTestVisible = state == PillState.Result;
         Animate(Actions, OpacityProperty, state == PillState.Rewriting ? 0.4 : 1, Theme.DurQuick, Theme.EaseOut);
-        if (state != PillState.Result) Countdown.Opacity = 0;
+        if (state is not (PillState.Result or PillState.Answer)) Countdown.Opacity = 0;
 
         StatusRun.Text = status;
         ContextRun.Text = context;
@@ -556,16 +627,19 @@ public partial class OverlayWindow : Window
         {
             PillState.Result => Theme.OverlayScript,
             PillState.Error => Theme.OverlayDanger,
+            PillState.Answer => Theme.OverlayAsk,
             _ => Theme.OverlayLine
         });
         SizeCard();
 
         if (same) return; // e.g. download progress text updating: keep the loops running
         StopLoops();
+        // The answer card has no tick, so the caret sits right next to its label.
+        Tick.Visibility = state == PillState.Answer ? Visibility.Collapsed : Visibility.Visible;
 
         switch (state)
         {
-            case PillState.Listening or PillState.HandsFree or PillState.Command:
+            case PillState.Listening or PillState.HandsFree or PillState.Command or PillState.Translate or PillState.Ask:
                 Array.Clear(_history);
                 FoldMeter(false, animate: true);
                 for (int i = 0; i < BarCount; i++)
@@ -625,6 +699,14 @@ public partial class OverlayWindow : Window
                         BeginTime = TimeSpan.FromMilliseconds(60), EasingFunction = Theme.EaseOut
                     });
                 else Tick.StrokeDashOffset = 0;
+                break;
+
+            case PillState.Answer:
+                // The waveform folds into the caret, which stays lit in the colour of Ask: text to read, not text that landed.
+                FoldMeter(true, animate: true);
+                Animate(Tick, OpacityProperty, 0, Theme.DurQuick, Theme.EaseIn);
+                Animate(_caret, OpacityProperty, 1, Theme.DurQuick, Theme.EaseOut);
+                Animate(Glow, OpacityProperty, 0.3, Theme.DurBase, Theme.EaseOut);
                 break;
 
             case PillState.Rewriting:

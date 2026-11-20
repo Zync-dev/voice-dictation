@@ -11,8 +11,12 @@ namespace Murmur;
 public partial class App : Application
 {
     // A test run with its own data folder (MURMUR_DATA_DIR) is its own instance, so it can run beside the real app.
-    private static string MutexName => AppSettings.IsTestInstance ? "Murmur.SingleInstance.Test" : "Murmur.SingleInstance";
-    private static string ShowEventName => AppSettings.IsTestInstance ? "Murmur.ShowWindow.Test" : "Murmur.ShowWindow";
+    // Each test data folder is its own instance, so several test runs can go side by side.
+    private static string TestSuffix => AppSettings.IsTestInstance
+        ? ".Test." + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(AppSettings.DataDir.ToLowerInvariant())))[..12]
+        : "";
+    private static string MutexName => "Murmur.SingleInstance" + TestSuffix;
+    private static string ShowEventName => "Murmur.ShowWindow" + TestSuffix;
 
     private Mutex? _mutex;
     private EventWaitHandle? _showEvent;
@@ -80,6 +84,19 @@ public partial class App : Application
             return;
         }
 
+        // ---- Modes and voice commands: developer checks ----
+        if (e.Args.Length == 2 && e.Args[0] == "--rulestest")
+        {
+            VoiceCommands.RunTests(e.Args[1]);
+            Shutdown();
+            return;
+        }
+        if (e.Args.Length == 3 && e.Args[0] == "--modestest")
+        {
+            _ = Modes.TestAsync(e.Args[1], e.Args[2]);
+            return;
+        }
+
         _mutex = new Mutex(true, MutexName, out bool isFirst);
         if (!isFirst)
         {
@@ -108,6 +125,8 @@ public partial class App : Application
         Overlay.Start(Settings.ShowRestPill);
         if (e.Args.Contains("--pill-demo"))
             PillDemoAsync().ContinueWith(t => Log.Write("Pill demo failed: " + t.Exception), TaskContinuationOptions.OnlyOnFaulted);
+        if (e.Args.Contains("--modes-demo"))
+            Modes.DemoAsync(Overlay).ContinueWith(t => Log.Write("Modes demo failed: " + t.Exception), TaskContinuationOptions.OnlyOnFaulted);
 
         _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
         var listener = new Thread(() =>

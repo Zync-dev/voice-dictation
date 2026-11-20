@@ -4,7 +4,7 @@ using System.Windows.Threading;
 
 namespace Murmur;
 
-public enum HotkeyKind { None, Dictate, Command }
+public enum HotkeyKind { None, Dictate, Command, Translate, Ask }
 
 /// <summary>
 /// Global low-level keyboard hook. Reports when the dictation / command key combos are
@@ -16,10 +16,7 @@ public sealed class HotkeyService : IDisposable
     private readonly Dispatcher _dispatcher;
     private readonly Native.LowLevelKeyboardProc _proc; // keep delegate alive
     private IntPtr _hook;
-    private readonly HashSet<int> _down = [];
-    private HotkeyKind _active = HotkeyKind.None;
-
-    private int _swallowedVk; // non-modifier hotkey key we are hiding from the focused app while held
+    private readonly HotkeyState _keys; // which keys are held and which hotkey they make; no side effects, so it can be tested
     private Action<List<int>?>? _captureDone;
     private readonly List<int> _captured = [];
 
@@ -35,6 +32,7 @@ public sealed class HotkeyService : IDisposable
     public HotkeyService(AppSettings settings, Dispatcher dispatcher)
     {
         _settings = settings;
+        _keys = new HotkeyState(settings);
         _dispatcher = dispatcher;
         _proc = HookCallback;
         _hook = Native.SetWindowsHookEx(Native.WH_KEYBOARD_LL, _proc, Native.GetModuleHandle(null), 0);
@@ -46,7 +44,7 @@ public sealed class HotkeyService : IDisposable
     public void BeginCapture(Action<List<int>?> done)
     {
         _captured.Clear();
-        _down.Clear();
+        _keys.Down.Clear();
         _captureDone = done;
     }
 
@@ -99,13 +97,13 @@ public sealed class HotkeyService : IDisposable
         if (isDown)
         {
             if (vk == Native.VK_ESCAPE) { FinishCapture(null); return; }
-            _down.Add(vk);
+            _keys.Down.Add(vk);
             if (!_captured.Contains(vk)) _captured.Add(vk);
         }
         else if (isUp)
         {
-            _down.Remove(vk);
-            if (_down.Count == 0 && _captured.Count > 0) FinishCapture([.. _captured]);
+            _keys.Down.Remove(vk);
+            if (_keys.Down.Count == 0 && _captured.Count > 0) FinishCapture([.. _captured]);
         }
     }
 
@@ -113,13 +111,11 @@ public sealed class HotkeyService : IDisposable
     {
         var done = _captureDone;
         _captureDone = null;
-        _down.Clear();
-        _active = HotkeyKind.None;
-        _swallowedVk = 0;
+        _keys.Down.Clear();
+        _keys.Active = HotkeyKind.None;
+        _keys.SwallowedVk = 0;
         _dispatcher.BeginInvoke(() => done?.Invoke(result));
     }
-
-    private bool Satisfied(List<int> combo) => combo.Count > 0 && combo.All(_down.Contains);
 
     /// <returns>true to swallow the key.</returns>
     private bool OnKeyDown(int vk)
@@ -136,70 +132,55 @@ public sealed class HotkeyService : IDisposable
 
         // Drop keys whose release we never saw (lock screen, UAC prompt, elevated window),
         // otherwise a stale entry would make the hotkey look permanently "already held".
-        _down.RemoveWhere(k => k != vk && k != _swallowedVk && !(k == Native.VK_LWIN
+        _keys.Down.RemoveWhere(k => k != vk && k != _keys.SwallowedVk && !(k == Native.VK_LWIN
             ? Native.IsDown(Native.VK_LWIN) || Native.IsDown(Native.VK_RWIN)
             : Native.IsDown(k)));
 
-        if (!_down.Add(vk)) return vk == _swallowedVk; // auto-repeat
-
-        var dictate = _settings.DictateHotkey;
-        var command = _settings.CommandHotkey;
-        bool inAnyCombo = dictate.Contains(vk) || command.Contains(vk);
-
-        // Prefer the larger combo when both match (e.g. Ctrl+Win vs Ctrl+Win+Alt).
-        HotkeyKind match = HotkeyKind.None;
-        bool cmd = Satisfied(command), dic = Satisfied(dictate);
-        if (cmd && dic) match = command.Count >= dictate.Count ? HotkeyKind.Command : HotkeyKind.Dictate;
-        else if (cmd) match = HotkeyKind.Command;
-        else if (dic) match = HotkeyKind.Dictate;
-
-        // A held combo may only turn into the other one by growing (Ctrl+Win -> Ctrl+Win+Alt).
-        // An unrelated sibling hotkey (F9 held, then F10) must not hijack the recording.
-        var activeCombo = _active == HotkeyKind.Command ? command : dictate;
-        var matchCombo = match == HotkeyKind.Command ? command : dictate;
-        bool grows = _active == HotkeyKind.None || activeCombo.All(matchCombo.Contains);
-
-        if (match != HotkeyKind.None && match != _active && inAnyCombo && grows)
+        var result = _keys.KeyDown(vk);
+        if (result.Started != HotkeyKind.None)
         {
-            bool first = _active == HotkeyKind.None;
-            _active = match;
-            if (first) Native.SendMaskKey();
-            Post(() => Down?.Invoke(match, !first));
+            if (!result.Upgrade) Native.SendMaskKey();
+            var kind = result.Started;
+            bool upgrade = result.Upgrade;
+            Post(() => Down?.Invoke(kind, upgrade));
         }
-        else if (_active != HotkeyKind.None && !inAnyCombo)
-        {
-            _active = HotkeyKind.None;
-            Post(() => Interrupted?.Invoke());
-        }
-
-        // Hide the non-modifier key of an active hotkey (e.g. F9, or the D of Ctrl+Shift+D) from the focused app.
-        if (_active != HotkeyKind.None && !IsModifier(vk) &&
-            (_active == HotkeyKind.Command ? command : dictate).Contains(vk))
-        {
-            _swallowedVk = vk;
-            return true;
-        }
-        return false;
+        else if (result.Interrupted) Post(() => Interrupted?.Invoke());
+        return result.Swallow;
     }
 
     /// <returns>true to swallow the key-up (its key-down was swallowed too).</returns>
     private bool OnKeyUp(int vk)
     {
-        _down.Remove(vk);
-        bool swallow = vk == _swallowedVk;
-        if (swallow) _swallowedVk = 0;
-        if (_active == HotkeyKind.None) return swallow;
-        var combo = _active == HotkeyKind.Command ? _settings.CommandHotkey : _settings.DictateHotkey;
-        if (combo.Contains(vk))
+        var result = _keys.KeyUp(vk);
+        if (result.Released != HotkeyKind.None)
         {
-            var kind = _active;
-            _active = HotkeyKind.None;
+            var kind = result.Released;
             Post(() => Up?.Invoke(kind));
         }
-        return swallow;
+        return result.Swallow;
     }
 
     private void Post(Action action) => _dispatcher.BeginInvoke(action);
+
+    internal static bool IsModifierKey(int vk) => IsModifier(vk);
+
+    /// <summary>
+    /// Order in which equally large matching combos win. Command comes before Dictate as it always did; two modes on
+    /// the very same keys are reported in Settings (Modes.HotkeyConflicts).
+    /// </summary>
+    internal static readonly HotkeyKind[] MatchOrder = [HotkeyKind.Command, HotkeyKind.Translate, HotkeyKind.Ask, HotkeyKind.Dictate];
+
+    private static readonly List<int> NoCombo = [];
+
+    /// <summary>The keys of one hotkey as saved in Settings (empty for None).</summary>
+    public static List<int> ComboFor(AppSettings settings, HotkeyKind kind) => kind switch
+    {
+        HotkeyKind.Dictate => settings.DictateHotkey,
+        HotkeyKind.Command => settings.CommandHotkey,
+        HotkeyKind.Translate => settings.TranslateHotkey ?? NoCombo,
+        HotkeyKind.Ask => settings.AskHotkey ?? NoCombo,
+        _ => NoCombo
+    };
 
     /// <summary>Key names as printed on a Windows keyboard, modifiers first: Ctrl, Win, Alt, Shift, then the key.</summary>
     public static IEnumerable<string> Names(IEnumerable<int> combo) => combo
@@ -219,5 +200,80 @@ public sealed class HotkeyService : IDisposable
     {
         if (_hook != IntPtr.Zero) Native.UnhookWindowsHookEx(_hook);
         _hook = IntPtr.Zero;
+    }
+}
+
+/// <summary>
+/// The keys held and the hotkey they make, without any side effects (no hook, no input sent), so key sequences can be
+/// tested (Murmur.exe --rulestest). A held hotkey only turns into another one by growing (Ctrl+Win -> Ctrl+Win+T);
+/// two different modes never take over from each other mid-press.
+/// </summary>
+internal sealed class HotkeyState
+{
+    private readonly AppSettings _settings;
+    public readonly HashSet<int> Down = [];
+    public HotkeyKind Active = HotkeyKind.None;
+    /// <summary>Non-modifier hotkey key hidden from the focused app while held.</summary>
+    public int SwallowedVk;
+
+    public HotkeyState(AppSettings settings) => _settings = settings;
+
+    /// <param name="Started">The hotkey that now starts (or that the held one grew into, when Upgrade).</param>
+    public readonly record struct Result(bool Swallow, HotkeyKind Started = HotkeyKind.None, bool Upgrade = false, bool Interrupted = false, HotkeyKind Released = HotkeyKind.None);
+
+    private bool Satisfied(List<int> combo) => combo.Count > 0 && combo.All(Down.Contains);
+
+    public Result KeyDown(int vk)
+    {
+        if (!Down.Add(vk)) return new(vk == SwallowedVk); // auto-repeat
+
+        bool inAnyCombo = HotkeyService.MatchOrder.Any(kind => HotkeyService.ComboFor(_settings, kind).Contains(vk));
+
+        // Prefer the larger combo when several match (e.g. Ctrl+Win vs Ctrl+Win+Alt or Ctrl+Win+T).
+        HotkeyKind match = HotkeyKind.None;
+        int best = 0;
+        foreach (var kind in HotkeyService.MatchOrder)
+        {
+            var combo = HotkeyService.ComboFor(_settings, kind);
+            if (Satisfied(combo) && combo.Count > best) { match = kind; best = combo.Count; }
+        }
+
+        // A held combo may only turn into another one by growing (Ctrl+Win -> Ctrl+Win+Alt).
+        // An unrelated sibling hotkey (F9 held, then F10, or Alt added to a held Ctrl+Win+T) must not hijack the recording.
+        var activeCombo = HotkeyService.ComboFor(_settings, Active);
+        var matchCombo = HotkeyService.ComboFor(_settings, match);
+        bool grows = Active == HotkeyKind.None || activeCombo.All(matchCombo.Contains);
+
+        var result = new Result(false);
+        if (match != HotkeyKind.None && match != Active && inAnyCombo && grows)
+        {
+            bool first = Active == HotkeyKind.None;
+            Active = match;
+            result = result with { Started = match, Upgrade = !first };
+        }
+        else if (Active != HotkeyKind.None && !inAnyCombo)
+        {
+            Active = HotkeyKind.None;
+            result = result with { Interrupted = true };
+        }
+
+        // Hide the non-modifier key of an active hotkey (e.g. F9, or the T of Ctrl+Win+T) from the focused app.
+        if (Active != HotkeyKind.None && !HotkeyService.IsModifierKey(vk) && HotkeyService.ComboFor(_settings, Active).Contains(vk))
+        {
+            SwallowedVk = vk;
+            result = result with { Swallow = true };
+        }
+        return result;
+    }
+
+    public Result KeyUp(int vk)
+    {
+        Down.Remove(vk);
+        bool swallow = vk == SwallowedVk;
+        if (swallow) SwallowedVk = 0;
+        if (Active == HotkeyKind.None || !HotkeyService.ComboFor(_settings, Active).Contains(vk)) return new(swallow);
+        var kind = Active;
+        Active = HotkeyKind.None;
+        return new(swallow, Released: kind);
     }
 }

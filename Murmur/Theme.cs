@@ -52,6 +52,11 @@ public static class Theme
     public static readonly Color OverlayThink = Hex("#ffc857");
     public static readonly Color OverlayScript = Hex("#45e0bc");
     public static readonly Color OverlayDanger = Hex("#ff6584");
+    // ---- Modes and voice commands: the two mode colours, on overlay-ground only (proposed tokens overlay-translate, overlay-ask) ----
+    /// <summary>Translate mode: the caret and glow while you speak in one language to be written in another.</summary>
+    public static readonly Color OverlayTranslate = Hex("#5cc8ff");
+    /// <summary>Ask mode: the caret and glow while a question is recorded, and the edge of the answer card.</summary>
+    public static readonly Color OverlayAsk = Hex("#c1e35c");
 
     // Motion tokens.
     public static readonly TimeSpan DurInstant = TimeSpan.FromMilliseconds(90);
