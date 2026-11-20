@@ -59,6 +59,7 @@ public partial class App : Application
 
         if (LearningTests.TryRun(this, e.Args)) return; // Learning and context: developer checks
         if (HandsFreeTests.TryRun(this, e.Args)) return; // Hands-free: --routertest, --screentest (HandsFreeTests.cs)
+        if (ControlTests.TryRun(this, e.Args)) return; // Hands-free computer control: --controltest (ControlTests.cs)
 
         if (e.Args.Length == 3 && e.Args[0] == "--eval")
         {

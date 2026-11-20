@@ -184,10 +184,12 @@
 
                         <!-- Hands-free: an explicit yes before anything that cannot be taken back. The keycap names the action. -->
                         <StackPanel x:Name="ConfirmActions" DockPanel.Dock="Right" Orientation="Horizontal" Margin="18,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
+                            <!-- Hands-free: computer control. "Which one?": a keycap per number (OverlayWindow.ShowChoices). -->
+                            <StackPanel x:Name="ChoiceKeys" Orientation="Horizontal" Visibility="Collapsed"/>
                             <Border x:Name="ConfirmYesKey" Tag="confirm-yes" Style="{StaticResource PillKey}" ToolTip="Do it">
                                 <TextBlock x:Name="ConfirmYesText" Style="{StaticResource PillKeyText}" Text="Send"/>
                             </Border>
-                            <Rectangle Style="{StaticResource PillKeyGap}"/>
+                            <Rectangle x:Name="ConfirmGap" Style="{StaticResource PillKeyGap}"/>
                             <Border x:Name="ConfirmNoKey" Tag="confirm-no" Style="{StaticResource PillKey}" ToolTip="Cancel">
                                 <TextBlock Style="{StaticResource PillKeyText}" Text="Esc"/>
                             </Border>

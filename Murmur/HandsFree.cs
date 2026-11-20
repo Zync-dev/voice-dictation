@@ -7,7 +7,7 @@ namespace Murmur;
 /// the card, the window reader and a guarded paste (IIntentHost). Called by DictationController on the UI thread; a
 /// phrase no intent takes goes back to the controller, which runs command mode as before.
 /// </summary>
-public sealed class HandsFree : IIntentHost
+public sealed partial class HandsFree : IIntentHost
 {
     private readonly OverlayWindow _overlay;
     private readonly Action<string, string>? _onAnswer;
@@ -59,19 +59,27 @@ public sealed class HandsFree : IIntentHost
         {
             Spoken = spoken, Normalized = IntentRules.Normalize(spoken), Language = language, Selection = selection ?? "", App = app, Settings = Settings,
             PendingConfirmation = _pending?.Question,
+            PendingChoices = _pending?.Choices, // Hands-free: computer control (numbered choices on the card)
         };
         var (match, timing) = await IntentRouter.RouteAsync(request, Llm, ct);
         // With hands-free intents off, only the answer to a waiting confirmation is taken.
-        if (!Settings.HandsFreeIntents && match?.Intent is not ConfirmIntent) match = null;
+        if (!Settings.HandsFreeIntents && match?.Intent is not (ConfirmIntent or IConfirmationAnswer)) match = null;
         LastRoute = $"{match?.Intent.Id ?? "rewrite"} ({match?.Layer ?? "fallback"}): {timing}";
         Log.Write("Command intent: " + LastRoute);
         // A confirmation waits only for the very next command; anything else said means no.
-        if (waiting && match?.Intent is not ConfirmIntent) Resolve(false);
+        // (Computer control: "nummer to" and "igen" answer the waiting question too, see Confirmations.cs.)
+        bool answering = waiting && match?.Intent is ConfirmIntent or IConfirmationAnswer;
+        if (waiting && !answering) Resolve(false);
         if (match == null) return false;
 
-        Window = window;
-        App = app;
-        KeysSent.Clear();
+        // An answer to a waiting question keeps the window the question was about: a yes never moves to another app.
+        if (!answering)
+        {
+            Window = window;
+            App = app;
+            KeysSent.Clear();
+            Remember(match, request); // for "igen" / "again" (HandsFree.Control.cs)
+        }
         LastAnswer = LastPasted = LastFlash = "";
         LastRead = null;
         // An intent that asks for a yes keeps waiting in the background, so the user can hold the command keys to answer.
@@ -156,6 +164,7 @@ public sealed class HandsFree : IIntentHost
         }
         LastPasted = text;
         string process = ScreenReader.ProcessOf(target);
+        RememberPaste(text, target, status); // a pasted reply draft can be sent after a confirmation (Confirmations.cs)
         _overlay.ShowResult(text, process, Processor.CanRewrite, status);
         if (note.Length > 0) _overlay.NoteOnResult(note, OverlayWindow.Note.Info, seconds: 8);
         _onPasted?.Invoke(text, target, process);
@@ -219,6 +228,8 @@ public sealed class HandsFree : IIntentHost
     private sealed class Pending(string question)
     {
         public string Question { get; } = question;
+        /// <summary>Computer control: the numbered choices when the card asks "which one?" (null for a yes/no question).</summary>
+        public IReadOnlyList<string>? Choices { get; init; }
         public TaskCompletionSource<bool> Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         /// <summary>The card was replaced by a recording that may answer it (command mode is reached through dictation's keys).</summary>
         public bool Parked;
@@ -229,7 +240,10 @@ public sealed class HandsFree : IIntentHost
         Resolve(false); // only one question at a time
         var pending = new Pending(question);
         _pending = pending;
-        _overlay.ShowConfirm(question, detail, verb, timeout ?? TimeSpan.FromSeconds(60));
+        var shown = timeout ?? Confirmations.Timeout(Settings);
+        _overlay.ShowConfirm(question, detail, verb, shown);
+        _reshow = () => _overlay.ShowConfirm(question, detail, verb, shown); // "igen" shows it again
+        ExpireLater(pending, shown);
         _askedForYes?.TrySetResult();
         Log.Write($"Waiting for a yes: {question} ({detail})");
         return pending.Done.Task;
@@ -239,14 +253,18 @@ public sealed class HandsFree : IIntentHost
     public void ResolveConfirmation(bool yes) => Resolve(yes);
 
     /// <summary>The card's confirmation keycaps: "confirm-yes" and "confirm-no".</summary>
-    public void OnCardAction(string action) => Resolve(action == "confirm-yes");
+    public void OnCardAction(string action)
+    {
+        if (action.StartsWith("confirm-choice-") && int.TryParse(action[15..], out int n)) { ResolveChoice(n); return; }
+        Resolve(action == "confirm-yes");
+    }
 
     private void Resolve(bool yes)
     {
         var pending = _pending;
         if (pending == null) return;
         _pending = null;
-        if (yes) _confirmedUntil = DateTime.UtcNow.AddSeconds(15);
+        if (yes && pending.Choices == null) _confirmedUntil = DateTime.UtcNow.AddSeconds(15);
         Log.Write($"Confirmation {(yes ? "given" : "not given")}: {pending.Question}");
         pending.Done.TrySetResult(yes);
     }

@@ -20,6 +20,8 @@ public sealed partial class DictationController
                 _history.Add(new HistoryEntry { Time = DateTime.Now, Text = text, Raw = "", App = app, Mode = "Command", Words = HistoryStore.CountWords(text) });
                 _assist.AfterPaste(text, window);
             });
+        // Computer control: reads the Start menu's app list once in the background, for "åbn Slack" (ComputerControl.cs).
+        if (_settings.ControlCommands) AppCatalog.WarmUp();
         // Finds the intents and parses their rules once in the background, so the first command pays nothing for it.
         _ = Task.Run(() => IntentRouter.MatchRules(IntentRequest.From("warm up", "", null, new ActiveWindowInfo("unknown", ""), _settings)));
     }

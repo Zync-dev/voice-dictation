@@ -588,6 +588,40 @@
                 </Border>
                 <!-- ==== end Hands-free (foundation) ==== -->
 
+                <!-- ==== Hands-free: computer control (MainWindow.Control.cs) ==== -->
+                <TextBlock x:Name="ControlHeading" Style="{StaticResource SectionHeading}" Text="Computer control"/>
+                <Border Style="{StaticResource SettingsCard}">
+                    <StackPanel>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Control apps and windows by voice"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="In command mode, say “åbn Slack”, “skift til Chrome”, “scroll ned”, “klik på Arkivér”, “luk vinduet”, “ny fane”, “kopiér” or “fortryd”. In English: “open Slack”, “switch to Chrome”, “scroll down”, “click Archive”, “close the window”, “undo”. Say “igen” or “again” to do it once more."/>
+                            </StackPanel>
+                            <CheckBox x:Name="ControlCommandsBox" Grid.Column="1" Click="ControlSetting_Changed" AutomationProperties.Name="Control apps and windows by voice"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Send a reply after you confirm"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="After Murmur pastes a reply, say “send”. The card asks first. Murmur presses the app’s send key (Outlook and Gmail Ctrl + Enter, Slack and Teams Enter) only after you say “ja” or click Send, and only while the draft is still in the reply field."/>
+                            </StackPanel>
+                            <CheckBox x:Name="ControlSendBox" Grid.Column="1" Click="ControlSetting_Changed" AutomationProperties.Name="Send a reply after you confirm"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Time to answer the card"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Sending, deleting, buying, closing, and Enter in mail and chat apps always wait for your yes on the card. With no answer in this time, nothing happens."/>
+                            </StackPanel>
+                            <ComboBox x:Name="ConfirmSecondsBox" Grid.Column="1" VerticalAlignment="Center" SelectionChanged="ControlSetting_Changed" AutomationProperties.Name="Time to answer the card"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+                <!-- ==== end Hands-free: computer control ==== -->
+
                 <!-- Microphone and language -->
                 <TextBlock Style="{StaticResource SectionHeading}" Text="Microphone and language"/>
                 <Border Style="{StaticResource SettingsCard}">

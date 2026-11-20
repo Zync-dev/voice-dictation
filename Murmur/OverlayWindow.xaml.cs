@@ -289,9 +289,44 @@ public partial class OverlayWindow : Window
         _liveWords = [];
         _answering = false;
         ConfirmYesText.Text = verb;
+        ChoiceKeys.Visibility = Visibility.Collapsed; // computer control: a yes/no question has no numbers
+        ConfirmYesKey.Visibility = ConfirmGap.Visibility = Visibility.Visible;
         Enter(PillState.Confirm, question, "", Theme.OverlayCommand);
         ShowText();
         CloseAfter(timeout);
+    }
+
+    // ---------- Hands-free: computer control. "Which one?" with numbered choices ----------
+
+    /// <summary>
+    /// The card asks which of several things the user meant: <paramref name="question"/> as the status, the options
+    /// numbered 1..n above it, a keycap per number (up to five) and Esc. Answered by a click on a number or, in command
+    /// mode, "nummer to" / "number two". Closes (meaning none) after <paramref name="timeout"/>.
+    /// </summary>
+    public void ShowChoices(string question, IReadOnlyList<string> options, TimeSpan timeout)
+    {
+        var lines = options.Select((o, i) => $"{i + 1}   {o}").ToList();
+        lines.Add("Say “nummer to” or “number two”, or press Esc.");
+        ShowConfirm(question, string.Join('\n', lines), "", timeout);
+        Words.MaxHeight = Math.Min(lines.Count, 7) * LineHeight;
+        ConfirmYesKey.Visibility = ConfirmGap.Visibility = Visibility.Collapsed;
+        ChoiceKeys.Children.Clear();
+        for (int i = 0; i < Math.Min(options.Count, 5); i++)
+        {
+            var key = new Border
+            {
+                Style = (Style)FindResource("PillKey"), Tag = $"confirm-choice-{i + 1}", ToolTip = options[i],
+                Child = new TextBlock { Style = (Style)FindResource("PillKeyText"), Text = (i + 1).ToString() },
+            };
+            key.MouseLeftButtonUp += (sender, e) =>
+            {
+                e.Handled = true;
+                if (_state == PillState.Confirm && sender is FrameworkElement { Tag: string action }) ActionRequested?.Invoke(action);
+            };
+            ChoiceKeys.Children.Add(key);
+            ChoiceKeys.Children.Add(new Rectangle { Style = (Style)FindResource("PillKeyGap") });
+        }
+        ChoiceKeys.Visibility = Visibility.Visible;
     }
 
     /// <summary>Hands-free: raised when the card changes state (old, new), so a waiting confirmation knows when it was replaced.</summary>

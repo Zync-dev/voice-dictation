@@ -209,6 +209,17 @@ public class AppSettings
 
     // ---- end Hands-free (foundation) ----
 
+    // ---- Hands-free: computer control ----
+
+    /// <summary>Command mode controls the computer: "åbn Slack", "skift til Chrome", "scroll ned", "klik på Arkivér", "luk vinduet", "kopiér", "fortryd".</summary>
+    public bool ControlCommands { get; set; } = true;
+    /// <summary>After Murmur pasted a reply draft, "send" sends it with the app's send key, always after a yes on the card.</summary>
+    public bool ControlSendAfterReply { get; set; } = true;
+    /// <summary>How long a question on the card ("Send the reply to Daniel?", "Which Export?") waits for an answer, in seconds.</summary>
+    public int ConfirmSeconds { get; set; } = 20;
+
+    // ---- end Hands-free: computer control ----
+
     // ---- persistence ----
 
     /// <summary>The real data folder; speech models always live here so test runs do not download them again.</summary>

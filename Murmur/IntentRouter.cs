@@ -70,6 +70,8 @@ public sealed class IntentRequest
     public AppSettings Settings { get; init; } = new();
     /// <summary>The question a confirmation card is waiting on ("Send this reply?"), or null when nothing waits.</summary>
     public string? PendingConfirmation { get; init; }
+    /// <summary>Computer control: the numbered choices the waiting card offers ("1 Export (Report)", ...), or null.</summary>
+    public IReadOnlyList<string>? PendingChoices { get; init; }
 
     public static IntentRequest From(string spoken, string selection, string? language, ActiveWindowInfo app, AppSettings settings) => new()
     {
@@ -150,7 +152,7 @@ public interface IIntentHost
     /// Asks for an explicit yes on the card: <paramref name="question"/> as the status, <paramref name="detail"/> (what
     /// exactly will happen) as the text, a keycap labelled <paramref name="verb"/> and Esc. Also answered in command mode
     /// ("send", "ja", "bekræft", "yes", "confirm" / "nej", "annuller", "no", "cancel"). False on no, Esc, timeout
-    /// (default 60 s) or when anything else takes the card.
+    /// (default <see cref="AppSettings.ConfirmSeconds"/>, 20 s) or when anything else takes the card.
     /// </summary>
     Task<bool> ConfirmAsync(string question, string detail, string verb, TimeSpan? timeout = null);
     /// <summary>
