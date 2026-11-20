@@ -55,6 +55,7 @@ public partial class App : Application
     {
         TuneGraphicsBackend();
         base.OnStartup(e);
+        if (HandleSetupSwitches(e.Args)) return; // installer, updates and first run: developer switches (App.Setup.cs)
 
         if (LearningTests.TryRun(this, e.Args)) return; // Learning and context: developer checks
 
@@ -153,7 +154,7 @@ public partial class App : Application
         }) { IsBackground = true };
         listener.Start();
 
-        if (!e.Args.Contains("--minimized")) ShowMainWindow();
+        StartSetupAndUpdates(e.Args); // first-run setup or the main window, and update checks (App.Setup.cs)
         ScheduleScreenshot(e.Args); // developer aid: --shot=out.png (App.DevTools.cs)
         _ = Controller.PrepareModelAsync();
     }
@@ -660,6 +661,7 @@ public partial class App : Application
 
     public void ShowMainWindow()
     {
+        if (ActivateOnboarding()) return; // setup is open: bring it forward instead (App.Setup.cs)
         if (_window == null)
         {
             _window = new MainWindow(this);
@@ -675,19 +677,8 @@ public partial class App : Application
         if (_tray != null) _tray.Text = "Murmur - hold " + HotkeyService.Describe(Settings.DictateHotkey) + " to dictate";
     }
 
-    public void ApplyAutostart()
-    {
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
-            if (key == null) return;
-            if (Settings.LaunchAtStartup && Environment.ProcessPath is { } exe)
-                key.SetValue("Murmur", $"\"{exe}\" --minimized");
-            else
-                key.DeleteValue("Murmur", false);
-        }
-        catch (Exception ex) { Log.Write("Autostart: " + ex.Message); }
-    }
+    // Points at the installed copy's stable path when installed; never touched by a test run (Updater.cs).
+    public void ApplyAutostart() => Autostart.Apply(Settings.LaunchAtStartup);
 
     public void Quit()
     {

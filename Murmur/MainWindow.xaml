@@ -107,6 +107,15 @@
                         <TextBlock Style="{StaticResource Caption}" Text="Hold to dictate" Margin="0,8,0,0"/>
                     </StackPanel>
                 </Border>
+                <!-- Installer, updates and first run: shown once a new version is downloaded (MainWindow.Setup.cs). -->
+                <Border x:Name="UpdateReadyPanel" DockPanel.Dock="Bottom" Background="{DynamicResource ScriptSoft}" CornerRadius="10"
+                        Padding="12,10,12,10" Margin="0,0,0,8" Visibility="Collapsed">
+                    <StackPanel>
+                        <TextBlock x:Name="UpdateReadyText" Style="{StaticResource Caption}" Foreground="{DynamicResource Ink}" TextWrapping="Wrap" Text="Update ready"/>
+                        <Button Style="{StaticResource BtnGhost}" HorizontalAlignment="Left" Margin="-12,6,0,-4" Content="Restart to update"
+                                Foreground="{DynamicResource Script}" Click="UpdateRestart_Click"/>
+                    </StackPanel>
+                </Border>
                 <ListBox x:Name="Nav" Background="Transparent" BorderThickness="0" Padding="0"
                          ItemContainerStyle="{StaticResource NavItem}" SelectionChanged="Nav_SelectionChanged"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Pages">
@@ -840,6 +849,62 @@
                     </StackPanel>
                 </Border>
                 <!-- ===== end Developer mode ===== -->
+
+                <!-- ==== Installer, updates and first run (MainWindow.Setup.cs) ==== -->
+                <TextBlock Style="{StaticResource SectionHeading}" Text="Updates and setup"/>
+                <Border x:Name="SetupCard" Style="{StaticResource SettingsCard}">
+                    <StackPanel>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock x:Name="UpdateVersionText" Style="{StaticResource Label}" Text="Murmur"/>
+                                <TextBlock x:Name="UpdateStatusText" Style="{StaticResource RowHelp}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button x:Name="UpdateCheckButton" Content="Check now" Click="UpdateCheck_Click"/>
+                                <Button x:Name="UpdateRestartButton" Style="{StaticResource BtnPrimary}" Content="Restart to update"
+                                        Click="UpdateRestart_Click" Visibility="Collapsed"/>
+                            </StackPanel>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Update automatically"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Looks for a new version every few hours and downloads it quietly. Only asks the update source below; nothing about you is sent."/>
+                            </StackPanel>
+                            <CheckBox x:Name="AutoUpdateBox" Grid.Column="1" Click="UpdateSetting_Changed" AutomationProperties.Name="Update automatically"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Update source"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="A GitHub repository with releases, or a folder that holds build-installer.ps1 output."/>
+                            </StackPanel>
+                            <TextBox x:Name="UpdateSourceBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="UpdateSetting_Changed" AutomationProperties.Name="Update source"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="GitHub access token"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Only for a private repository: a token that can read its contents. Stored encrypted for your Windows account."/>
+                            </StackPanel>
+                            <PasswordBox x:Name="UpdateTokenBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="UpdateSetting_Changed" AutomationProperties.Name="GitHub access token"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Setup"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Walk through the microphone, languages and hotkey practice again."/>
+                            </StackPanel>
+                            <Button Grid.Column="1" VerticalAlignment="Center" Content="Run setup again" Click="RunSetup_Click"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+                <!-- ==== end Installer, updates and first run ==== -->
 
                 <TextBlock x:Name="DataPathText" Style="{StaticResource Caption}" Margin="0,-8,0,0"/>
             </StackPanel>

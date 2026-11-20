@@ -118,6 +118,7 @@ public partial class MainWindow : Window
         LoadDeveloperSettings(); // ---- Developer mode (MainWindow.DevMode.cs) ----
 
         _loading = false;
+        InitSetupSection(); // installer, updates and first run (MainWindow.Setup.cs)
         RefreshHotkeys();
         RefreshEnginePanels();
         SecondLanguagePanel.Visibility = S.Language == "auto" ? Visibility.Collapsed : Visibility.Visible;

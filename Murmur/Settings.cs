@@ -167,6 +167,19 @@ public class AppSettings
     public string FileTranscribeLanguage { get; set; } = "auto";
     // ---- end Developer mode and file transcription ----
 
+    // ---- Installer, updates and first run ----
+
+    /// <summary>Look for a new version in the background (at startup and every few hours) and download it quietly. Only an installed copy updates.</summary>
+    public bool AutoUpdate { get; set; } = true;
+    /// <summary>Where new versions come from: a GitHub repository address, or a folder or web address that holds the output of build-installer.ps1.</summary>
+    public string UpdateSource { get; set; } = Updater.DefaultSource;
+    /// <summary>GitHub access token (read-only access to the repository's releases), needed while the repository is private. Encrypted with DPAPI.</summary>
+    public string UpdateTokenProtected { get; set; } = "";
+
+    /// <summary>True when settings.json exists, i.e. this is not a fresh install. Read before the first save.</summary>
+    public static bool HasSavedSettings => File.Exists(FilePath);
+    // ---- end Installer, updates and first run ----
+
     // ---- persistence ----
 
     /// <summary>The real data folder; speech models always live here so test runs do not download them again.</summary>
