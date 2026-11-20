@@ -19,6 +19,14 @@ public class HistoryEntry
     [JsonIgnore] public string AppLower => App.ToLowerInvariant();
     [JsonIgnore] public string TimeText => Time.ToString("ddd d MMM, HH:mm");
     [JsonIgnore] public string WordsText => Words == 1 ? "1 word" : $"{Words:N0} words";
+    /// <summary>The calendar day, for grouping the history list.</summary>
+    [JsonIgnore] public DateTime Day => Time.Date;
+    /// <summary>Time of day only; the day is shown by the group the row sits in.</summary>
+    [JsonIgnore] public string ClockText => Time.ToString("t");
+    [JsonIgnore] public bool HasApp => !string.IsNullOrWhiteSpace(App);
+    /// <summary>The text on one flowing paragraph, so a long or multi-line dictation can be cut with an ellipsis.</summary>
+    [JsonIgnore] public string Preview =>
+        string.Join(" ", Text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 }
 
 public class HistoryStore
