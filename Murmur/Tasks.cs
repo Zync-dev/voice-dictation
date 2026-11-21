@@ -272,6 +272,8 @@ public sealed class TaskRun
     public int FailedStep { get; internal set; }
     public List<string> Log { get; } = [];
     public string Answer { get; internal set; } = "";
+    /// <summary>When the task was planned: a problem report takes the log lines from here on (ProblemReports.cs).</summary>
+    public DateTime Created { get; } = DateTime.Now;
 
     internal TaskRun(TaskPlan plan, IntentRequest request, IntentMatch match)
     {
@@ -411,7 +413,7 @@ public static class TaskRunner
                 if (!result.Ok && ctx.OverTime) { Fail(ctx, i, TooLong); outcome = "timeout"; return; }
                 if (!result.Ok)
                 {
-                    if (result.Declined) { Fail(ctx, i, result.Message.Length > 0 ? result.Message : "Not confirmed."); outcome = "declined"; }
+                    if (result.Declined) { Fail(ctx, i, result.Message.Length > 0 ? result.Message : "Not confirmed.", report: false); outcome = "declined"; }
                     else { Fail(ctx, i, result.Message); outcome = "failed"; }
                     return;
                 }
@@ -463,7 +465,7 @@ public static class TaskRunner
 
     private static string TooLong => $"It took longer than {WorkLimit.TotalSeconds:0} seconds, so Murmur stopped.";
 
-    private static void Fail(Context ctx, int i, string why)
+    private static void Fail(Context ctx, int i, string why, bool report = true)
     {
         var run = ctx.Run;
         run.States[i] = TaskStepState.Failed;
@@ -471,6 +473,8 @@ public static class TaskRunner
         run.FailedStep = i + 1;
         why = why.Trim();
         if (why.Length > 0 && !why.EndsWith('.')) why += ".";
+        // Problem reports: gathered in the background; the failed card offers a Report keycap (ProblemReports.cs).
+        if (report && ProblemReports.ForTask(ctx.Hf.Settings, run, i, why, ctx.Target, ctx.Seen ?? ctx.Hf.LastRead) is { } problem) ctx.Hf.Overlay.OfferReport(problem);
         ctx.Card($"Step {i + 1} failed. {why}", final: true, failed: true);
     }
 

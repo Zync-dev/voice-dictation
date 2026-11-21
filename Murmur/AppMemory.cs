@@ -77,7 +77,7 @@ public static class AppMemory
     /// <summary>The developer checks that drive tasks start with a fresh memory (in memory only).</summary>
     internal static void ForTestRun(string[] args)
     {
-        if (args.Length > 0 && args[0] is "--tasktest" or "--screentest" or "--controltest" or "--edittest" or "--speaktest" or "--learning-test")
+        if (args.Length > 0 && args[0] is "--tasktest" or "--screentest" or "--controltest" or "--edittest" or "--speaktest" or "--learning-test" or "--reporttest")
             UseTemporary();
     }
 

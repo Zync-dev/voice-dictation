@@ -51,10 +51,10 @@ public static class UiaShape
             n++;
             sb.AppendLine();
             sb.AppendLine($"=== window {n} of {windows.Count}: app name \"{ScreenReader.AppName(w.Window)}\", title length {w.Title.Length}, class {Class(w.Window)} ===");
-            var first = Walk(w.Window, write: false);
+            var first = Walk(w.Window, new ShapeOptions { Write = false });
             sb.AppendLine($"first walk: {first.Summary}");
             Thread.Sleep(4000);
-            var second = Walk(w.Window, write: true);
+            var second = Walk(w.Window, new ShapeOptions { Labels = Environment.GetEnvironmentVariable("MURMUR_SHAPE_NAMES") == "1" });
             sb.AppendLine($"second walk, 4 s later: {second.Summary}");
             sb.AppendLine("legend: depth, ControlType, class, aid=automation id, name=<length>[,<parts> parts][,time][,date], kids=<children>, patterns I=Invoke S=SelectionItem(sel = selected) E=ExpandCollapse T=Toggle V=Value X=Text G=Grid, off=offscreen, focusable, disabled");
             sb.Append(second.Tree);
@@ -72,10 +72,34 @@ public static class UiaShape
     [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
     private static extern int GetClassName(IntPtr hwnd, StringBuilder name, int max);
 
-    private sealed record Result(string Summary, string Tree);
+    internal sealed record Result(string Summary, string Tree);
 
-    private static Result Walk(IntPtr hwnd, bool write)
+    /// <summary>How a walk writes the tree (the developer switch, or a problem report: ProblemReports.cs).</summary>
+    internal sealed class ShapeOptions
     {
+        public bool Write { get; init; } = true;
+        /// <summary>Write the labels of the app's own controls (buttons, fields, tabs, menus).</summary>
+        public bool Labels { get; init; }
+        /// <summary>
+        /// Problem reports: labels only outside lists, tables, trees and documents, never a hyperlink (it can be part of a
+        /// mail), nothing with an @ or a long number in it; every name that is not written goes to <see cref="Hidden"/>.
+        /// </summary>
+        public bool Strict { get; init; }
+        public int MaxNodes { get; init; } = UiaShape.MaxNodes;
+        public TimeSpan Budget { get; init; } = TimeSpan.FromSeconds(90);
+        /// <summary>Strict: the names that were left out (in memory only), so a report can check that none of them got in.</summary>
+        public List<string>? Hidden { get; init; }
+    }
+
+    private static readonly HashSet<string> ContentTypes = ["List", "ListItem", "DataItem", "Tree", "TreeItem", "Table", "DataGrid", "Document"];
+    private static readonly HashSet<string> StrictLabelTypes = ["Button", "SplitButton", "Edit", "ComboBox", "TabItem", "MenuItem", "ToolBar", "Tab", "Menu", "MenuBar", "CheckBox", "RadioButton"];
+
+    /// <summary>The shape of one window (see the class notes); never its text. Runs on the calling thread.</summary>
+    internal static Result Shape(IntPtr hwnd, ShapeOptions options) => Walk(hwnd, options);
+
+    private static Result Walk(IntPtr hwnd, ShapeOptions o)
+    {
+        bool write = o.Write;
         var watch = Stopwatch.StartNew();
         var tree = new StringBuilder();
         var types = new Dictionary<string, int>();
@@ -95,11 +119,11 @@ public static class UiaShape
             AutomationElement root;
             try { root = AutomationElement.FromHandle(hwnd).GetUpdatedCache(cache); }
             catch (Exception ex) { return new Result("the window did not answer: " + ex.GetType().Name, ""); }
-            var stack = new Stack<(AutomationElement E, int Depth, bool Fresh)>();
-            stack.Push((root, 0, true));
-            while (stack.Count > 0 && nodes < MaxNodes && watch.Elapsed < TimeSpan.FromSeconds(90))
+            var stack = new Stack<(AutomationElement E, int Depth, bool Fresh, bool InContent)>();
+            stack.Push((root, 0, true, false));
+            while (stack.Count > 0 && nodes < o.MaxNodes && watch.Elapsed < o.Budget)
             {
-                var (e, depth, fresh) = stack.Pop();
+                var (e, depth, fresh, inContent) = stack.Pop();
                 nodes++;
                 maxDepth = Math.Max(maxDepth, depth);
                 AutomationElementCollection? kids = null;
@@ -114,6 +138,7 @@ public static class UiaShape
                 bool hasTime = Time.IsMatch(name), hasDate = ItemFinder.HasTimeOrDate(name) && !hasTime;
                 if (hasTime || hasDate) timed++;
                 int count = kids?.Count ?? 0;
+                bool labelled = false;
                 if (write)
                 {
                     tree.Append(' ', Math.Min(depth, 40) * 2).Append(depth).Append(' ').Append(type);
@@ -129,9 +154,14 @@ public static class UiaShape
                         if (hasDate) tree.Append(",date");
                         // MURMUR_SHAPE_NAMES=1: the labels of the app's own controls (buttons, fields, tabs, menus), never
                         // list rows, texts or documents, nothing with a time or date and nothing longer than 40 characters.
-                        if (Environment.GetEnvironmentVariable("MURMUR_SHAPE_NAMES") == "1" && !hasTime && !hasDate && name.Length <= 40
-                            && type is "Button" or "SplitButton" or "Edit" or "ComboBox" or "TabItem" or "MenuItem" or "ToolBar" or "Tab" or "Hyperlink")
+                        if (o.Labels && !hasTime && !hasDate && name.Length <= 40
+                            && (o.Strict
+                                ? !inContent && StrictLabelTypes.Contains(type) && !name.Contains('@') && !Regex.IsMatch(name, @"\d{4,}")
+                                : type is "Button" or "SplitButton" or "Edit" or "ComboBox" or "TabItem" or "MenuItem" or "ToolBar" or "Tab" or "Hyperlink"))
+                        {
                             tree.Append(" \"").Append(name.Replace('"', '\'')).Append('"');
+                            labelled = true;
+                        }
                     }
                     tree.Append(" kids=").Append(count);
                     string patterns = (Has(e, AutomationElement.IsInvokePatternAvailableProperty) ? "I" : "")
@@ -145,13 +175,15 @@ public static class UiaShape
                     if (!c.IsEnabled) tree.Append(" disabled");
                     tree.AppendLine();
                 }
+                if (!labelled && !c.IsPassword && name.Length >= 4) o.Hidden?.Add(name);
                 if (c.IsPassword) { passwords++; continue; }
                 if (kids == null || depth >= MaxDepth) continue;
-                for (int i = Math.Min(kids.Count, 1000) - 1; i >= 0; i--) stack.Push((kids[i], depth + 1, false));
+                bool childInContent = inContent || ContentTypes.Contains(type);
+                for (int i = Math.Min(kids.Count, 1000) - 1; i >= 0; i--) stack.Push((kids[i], depth + 1, false, childInContent));
             }
         }
         string top = string.Join(", ", types.OrderByDescending(t => t.Value).Take(14).Select(t => $"{t.Key} {t.Value}"));
-        string summary = $"{nodes} elements in {watch.ElapsedMilliseconds} ms{(nodes >= MaxNodes ? " (cut off)" : "")}, depth {maxDepth}, {documents} documents, {items} list/tree/table items, {timed} names with a time or date, {passwords} password fields, {failed} elements that did not answer; by type: {top}";
+        string summary = $"{nodes} elements in {watch.ElapsedMilliseconds} ms{(nodes >= o.MaxNodes || watch.Elapsed >= o.Budget ? " (cut off)" : "")}, depth {maxDepth}, {documents} documents, {items} list/tree/table items, {timed} names with a time or date, {passwords} password fields, {failed} elements that did not answer; by type: {top}";
         return new Result(summary, tree.ToString());
     }
 

@@ -1,0 +1,101 @@
+<Window x:Class="Murmur.ProblemReportWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Problem report" Width="640" Height="760" MinWidth="520" MinHeight="520"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResize" ShowInTaskbar="True"
+        Background="{DynamicResource Ground}" Foreground="{DynamicResource Ink}"
+        FontFamily="{StaticResource FontBody}" FontSize="14"
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Ideal">
+    <!--
+        Problem reports (ProblemReports.cs): what went wrong in plain words, exactly what the report holds (the whole text
+        can be opened and read), an optional screenshot of only the app's window (off; shown here before it is saved),
+        and Save report (a zip on the Desktop) or Copy summary. Nothing is uploaded. One voice lead: Save report.
+    -->
+    <Window.Resources>
+        <Style x:Key="HoldsRow" TargetType="Grid">
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+        <Style x:Key="RowLine" TargetType="Border">
+            <Setter Property="Height" Value="1"/>
+            <Setter Property="Background" Value="{DynamicResource Line}"/>
+            <Setter Property="Margin" Value="0,4,0,16"/>
+        </Style>
+        <Style x:Key="Plate" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource SurfaceSunken}"/>
+            <Setter Property="CornerRadius" Value="10"/>
+            <Setter Property="Padding" Value="2"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid x:Name="Root" Background="{DynamicResource Ground}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- What went wrong -->
+        <StackPanel Grid.Row="0" Margin="32,28,32,0">
+            <ContentControl x:Name="KindTag" Style="{StaticResource TagDanger}" Content="Failed"/>
+            <TextBlock x:Name="HeadlineText" Style="{StaticResource Title}" Margin="0,12,0,0" TextWrapping="Wrap" Text="Step 1 failed."/>
+            <TextBlock x:Name="WhatText" Style="{StaticResource Body}" Margin="0,8,0,0" TextWrapping="Wrap"/>
+            <TextBlock x:Name="WhenText" Style="{StaticResource Caption}" Margin="0,8,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <ScrollViewer x:Name="Body" Grid.Row="1" Margin="0,20,0,0" VerticalScrollBarVisibility="Auto" Focusable="False">
+            <StackPanel Margin="32,0,32,8">
+                <!-- What the report holds -->
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource Heading}" Text="What the report holds"/>
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,16" TextWrapping="Wrap"
+                                   Text="Only what helps find the problem. It stays on this PC until you share it yourself."/>
+                        <StackPanel x:Name="HoldsList"/>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                                   Text="Never in a report: mail or message text, list rows, documents, window titles, API keys, or email addresses you did not say."/>
+                        <Button x:Name="ShowAllButton" Style="{StaticResource BtnGhost}" HorizontalAlignment="Left" Margin="0,16,0,0"
+                                Content="Show the whole report" Click="ShowAll_Click"/>
+                        <Border x:Name="AllPlate" Style="{StaticResource Plate}" Margin="0,12,0,0" Visibility="Collapsed">
+                            <TextBox x:Name="AllText" IsReadOnly="True" Height="260" BorderThickness="0" Background="Transparent"
+                                     Foreground="{DynamicResource Ink}" FontFamily="{StaticResource FontMono}" FontSize="11.5"
+                                     Padding="12,10" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                     AutomationProperties.Name="The whole report"/>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- Screenshot, off by default -->
+                <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Margin="0,0,24,0" VerticalAlignment="Center">
+                                <TextBlock Style="{StaticResource Label}" Text="Include a screenshot"/>
+                                <TextBlock x:Name="ShotHelp" Style="{StaticResource Caption}" Margin="0,2,0,0" TextWrapping="Wrap"
+                                           Text="A picture of only the app's window, taken now. It can show mail text, so you see it here before it is saved."/>
+                            </StackPanel>
+                            <CheckBox x:Name="ShotBox" Grid.Column="1" VerticalAlignment="Center" Click="Shot_Click" AutomationProperties.Name="Include a screenshot"/>
+                        </Grid>
+                        <Border x:Name="ShotPlate" Style="{StaticResource Plate}" Margin="0,16,0,0" Visibility="Collapsed">
+                            <Image x:Name="ShotImage" MaxHeight="240" Stretch="Uniform" HorizontalAlignment="Center"/>
+                        </Border>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Save or copy. Nothing is uploaded. -->
+        <Border Grid.Row="2" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Padding="32,16,32,20">
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBlock x:Name="StatusText" Style="{StaticResource Caption}" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0"
+                           Text="Nothing is uploaded. Save the report and send it yourself if you want help."/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button x:Name="CopyButton" Style="{StaticResource BtnGhost}" Content="Copy summary" Click="Copy_Click"/>
+                    <Button x:Name="SaveButton" Style="{StaticResource BtnPrimary}" Margin="12,0,0,0" Content="Save report" Click="Save_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

@@ -736,6 +736,24 @@
                 </Border>
                 <!-- ==== end App profiles and memory ==== -->
 
+                <!-- ==== Problem reports (MainWindow.Reports.cs, ProblemReports.cs) ==== -->
+                <TextBlock x:Name="ReportsHeading" Style="{StaticResource SectionHeading}" Text="Problem reports"/>
+                <Border Style="{StaticResource SettingsCard}">
+                    <StackPanel>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Offer a report when a step fails"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="When a task or a hands-free command fails, the card shows Report. The report holds the steps, Murmur's log and how the app's window is built, never mail text or keys. The last 10 are kept on this PC. Nothing is uploaded."/>
+                            </StackPanel>
+                            <CheckBox x:Name="ProblemReportsKeepBox" Grid.Column="1" Click="ReportSetting_Changed" AutomationProperties.Name="Offer a report when a step fails"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <StackPanel x:Name="ReportsList" Margin="0,8,0,8"/>
+                    </StackPanel>
+                </Border>
+                <!-- ==== end Problem reports ==== -->
+
                 <!-- Microphone and language -->
                 <TextBlock Style="{StaticResource SectionHeading}" Text="Microphone and language"/>
                 <Border Style="{StaticResource SettingsCard}">

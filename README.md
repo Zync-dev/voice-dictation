@@ -13,6 +13,7 @@ Voice dictation for Windows. Hold a hotkey in any app, talk, release - the text 
 | Hands-free commands | In command mode: "svar på mailen …" / "reply to this email …", "opsummer det her" / "summarize this", "hvad vil de have?" / "what do they want?", "lav en to-do-liste". Murmur reads the window in front (UI Automation, else Windows OCR) only when asked, and never sends anything. See below. |
 | Voice editing and read aloud | In command mode: "ret tirsdag til onsdag", "marker sidste sætning", "slet sidste sætning", "gør det mere høfligt", "store bogstaver", "go to the end"; "læs op" / "read the email" with Windows' own Danish and English voices, "stop", "læs hurtigere". See below. |
 | Multi-step tasks | In command mode: "find mailen fra Daniel om tilbuddet og svar at vi går videre", "åbn Slack og skriv til Mette at jeg er forsinket", "find the email from James and reply that I can join". The card shows the plan as numbered steps and runs it only after "ja" or "kør". Sending asks again. See below. |
+| Problem reports | When a hands-free step or task fails, the card offers **Report**: a short report of the steps, Murmur's log and how the app's window is built, never mail text or keys. Save it as a zip or copy a summary. Nothing is uploaded. See below. |
 | On-device transcription | Whisper runs locally (whisper.cpp). Free, private, offline. Uses the GPU through Vulkan when available. |
 | Cloud transcription (optional) | Groq, OpenAI or Mistral, picked from a list with their speech models, or any OpenAI-compatible `/audio/transcriptions` address. See [AI providers](#ai-providers). |
 | Automatic cleanup | Removes filler words, understands "new line" / "new paragraph", fixes capitalization. |
@@ -476,6 +477,41 @@ Not verified:
 - None of the real apps was driven with the profiles. The new Outlook profile follows what `--uia-shape olk` showed on one PC (English UI): the `MailList` list, the late scroll position, the Focused / Other tabs, no search box. The other profiles come from how the apps are known to work: their titles, keys and box names were not checked in the real apps. Gmail's tabs, Slack's and Teams' message box names, Teams' Ctrl+E and classic Outlook's reply window are guesses until tried.
 - On the hidden desktop the checks run on, the fake Outlook's own row selection lands up to a few seconds after Murmur selects it (the check waits for it). The search, reply and send parts of the memory need keys and so a window in front: they were checked with the unit checks, not end to end.
 
+## Problem reports
+
+Settings > Problem reports. When a hands-free step fails, the card shows a **Report** keycap next to Esc. That happens when a task step fails (a step that fails or runs out of time, not one you said no to), when a hands-free command shows an error (a button, field or key that did not work), and when a reply or other text was not pasted ("Not pasted"). **Report** opens a small Murmur window. It says what went wrong in plain words and lists what the report holds. **Show the whole report** shows the full text. **Include a screenshot** is off. **Save report** writes `Murmur-report-<date>-<time>.zip` to the Desktop and shows it in Explorer. **Copy summary** puts a short text on the clipboard. Nothing is uploaded anywhere.
+
+What a report holds. It is gathered in the background when the step fails, off the UI thread, within 8 s, and the UI Automation walk gets 4 s:
+- The step and the plan: tool names and their arguments (your own words), what you said, and which step failed.
+- Murmur's own log lines for that run, from when the task was planned or the command was heard. Quoted text that is not your words becomes `“‹n chars›”`. Anything seen in the window is taken out wherever it shows up, also when cut short, as `‹hidden›`. That covers row names and their parts, the window title, and the text read for the step. Your user folder becomes `%USERPROFILE%` and the PC's name becomes `<pc>`.
+- The app: process, app name, window class, how it is built (WPF, Chromium or Electron, WinUI, content in WebView2), the processes it draws in, and whether it is a mail app. The title is never written, only its length.
+- The window's UI Automation shape (`UiaShape.cs`, the same walk as `--uia-shape`, at most 4,000 elements): control types, classes, automation ids, depth, name lengths and flags. It also holds the labels of the app's own buttons, fields, tabs and menus, as `MURMUR_SHAPE_NAMES=1` does. It is stricter about them: nothing inside a list, table, tree or document, no hyperlinks, nothing with a time, a date, an @ or a long number, and nothing over 40 characters.
+- Murmur's version, Windows' version, the AI provider and model, the speech engine and model, and a few hands-free settings. Never a key or an address.
+- Never mail or message text, list rows, documents or window titles. No screenshot unless you tick **Include a screenshot**. That is a PrintWindow picture of only that app's window, shown in the report window before anything is saved, and it goes only into the zip. Excluded apps and Murmur's own windows are never read or pictured. Password fields are marked, and nothing in them is read.
+
+Checks (`ProblemReports.Check`, `Redact`). Before a report is kept, every part is redacted and then checked:
+- API keys: `sk-…`, `sk-ant-…`, `gsk_…`, `AIza…`, `Bearer …`, `x-api-key`/`api_key`/`authorization`/`token` values, GitHub tokens, and the keys saved in Murmur's own settings.
+- Email addresses you did not say.
+- Text seen in the window: whole names and their parts of 10 characters or more, and the first 14 characters of a long one.
+- Sizes: at most 120 log lines of 300 characters, a shape of 64,000 characters and a report of 200,000. A screenshot is at most 1920 px wide and 6 MB.
+
+A part that still fails the check is left out, and the report says so. The last 10 reports are kept as JSON in `<data>\reports`, and older ones are deleted. Settings lists them with **Open** and **Delete**.
+
+Code: `ProblemReports.cs` (gathering, redaction, the checks, keeping, the zip), `ProblemReportWindow.xaml(.cs)` (the report window), `OverlayWindow.Report.cs` (the Report keycap), `HandsFree.Report.cs` (commands and pastes), the `Fail` step in `Tasks.cs`, `MainWindow.Reports.cs` (Settings), `ReportTests.cs`.
+
+Setting: `ProblemReportsKeep` (on). Off: no report is made and the card shows no Report keycap.
+
+| Switch | What it does |
+| --- | --- |
+| `--reporttest out.txt` | Run with `MURMUR_DATA_DIR` (and `MURMUR_HIDDEN_DESKTOP=1`). The checks' own test window (`--reporthost`, its own process) has buttons, tabs, a search box, mail-like rows, a document with a link and an address, a signed-in line, a title and a password box. The test makes a task step fail after opening a row, makes a hands-free click fail, and makes a paste not land. It checks each report's words, plan, log, app, profile, versions and shape (the labels of the buttons, tabs and field, the list, the document and the password field without text). It checks that nothing from the rows, the document, the title, the link, the signed-in line, the password or keys and addresses written to the log gets in, and that the checks pass and the sizes are capped. Also: the redaction table, an excluded app (not read, no picture), the setting off, and the Report keycap opening the window in both themes. Then the screenshot ticked (a zip with `screenshot.png`) and not ticked, Save report (written to `<data>\Desktop`, never the real Desktop) and Copy summary (no clipboard in the checks). Then the 10-report limit, Delete, and the Settings list with Open. `MURMUR_SHOTS=folder` saves the card, the window (plain and expanded) and the list in Night and Paper, via PrintWindow. No AI calls. Exit code 1 on a failure |
+| `--show-reports` | Opens Settings scrolled to this section (with `--page=5`) |
+
+Not verified:
+- No real app was reported on. New Outlook's shape is known from `--uia-shape`, and the report uses the same walk.
+- On the hidden test desktop, PrintWindow of another app's WPF window draws only white, so the included screenshot in the checks is a white window with its title bar. On the normal desktop it shows the window.
+- The Settings section was checked by building its list in a test window, not by opening the full main window.
+- Explorer opening on the saved zip and the clipboard copy were not run in the checks.
+
 ## Sound clean-up and hands-free auto-stop
 
 Settings > Sound. Everything runs in-process on the CPU (about 1.5-2 ms per second of audio, measured) and sends nothing anywhere.
@@ -552,7 +588,7 @@ Developer switches (run with `MURMUR_DATA_DIR` set):
 
 ## Where data lives
 
-`%AppData%\Murmur` - `settings.json`, `history.json`, `murmur.log` and `models\`. API keys (one per AI provider) are encrypted with Windows DPAPI for your user account.
+`%AppData%\Murmur` - `settings.json`, `history.json`, `murmur.log`, `models\` and `reports\` (the last 10 problem reports). API keys (one per AI provider) are encrypted with Windows DPAPI for your user account.
 
 ## Known limits
 

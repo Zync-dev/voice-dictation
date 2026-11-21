@@ -434,7 +434,7 @@ public partial class OverlayWindow : Window
         if (text.Length > 70) text = text[..69] + "…";
         Enter(error ? PillState.Error : PillState.Info, text, "", error ? Theme.OverlayDanger : Theme.OverlayMuted);
         ClearText();
-        ReturnAfter(TimeSpan.FromSeconds(error ? Math.Max(seconds, 4) : seconds));
+        ReturnAfter(TimeSpan.FromSeconds(error ? Math.Max(seconds, CardReport != null ? 12 : 4) : seconds)); // Problem reports: time to press Report
     }
 
     /// <summary>Back to idle with no message (after a cancel, or when there is nothing to say).</summary>
@@ -750,6 +750,7 @@ public partial class OverlayWindow : Window
         TaskActions.Visibility = task ? Visibility.Visible : Visibility.Collapsed;
         _keycapsShown = finish || cancel || actions || answer || confirm || reading || task;
         UpdatePadding();
+        UpdateReportKeys(); // Problem reports (OverlayWindow.Report.cs)
     }
 
     private bool _keycapsShown;
@@ -765,6 +766,7 @@ public partial class OverlayWindow : Window
         bool same = _state == state && state != PillState.Result;
         var left = _state;
         _state = state;
+        TakeReportOffer(state); // Problem reports (OverlayWindow.Report.cs)
         if (left != state) CardStateChanged?.Invoke(left.ToString(), state.ToString()); // Hands-free
 
         if (!IsVisible) Present();

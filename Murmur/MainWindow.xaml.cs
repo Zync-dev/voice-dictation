@@ -114,6 +114,7 @@ public partial class MainWindow : Window
         LoadEditSpeakSettings(); // edit-speak: voice editing and read aloud (MainWindow.EditSpeak.cs)
         LoadTaskSettings(); // Hands-free: multi-step tasks (MainWindow.Tasks.cs)
         LoadAppMemorySettings(); // App profiles and memory of what worked (MainWindow.AppMemory.cs)
+        LoadReportSettings(); // Problem reports (MainWindow.Reports.cs)
         LoadDeveloperSettings(); // ---- Developer mode (MainWindow.DevMode.cs) ----
 
         _loading = false;
