@@ -24,6 +24,7 @@ public static class TaskTests
     {
         if (args.Length >= 1 && args[0] == "--outlookhost") { OutlookHost.Run(args); return true; }
         if (args.Length == 2 && args[0] == "--tasktest") { _ = Finish(app, args[1]); return true; }
+        if (args.Length == 2 && args[0] == "--planonly") { _ = PlanOnlyAsync(app, args[1]); return true; }
         if (args.Length == 1 && args[0].StartsWith("--task-demo"))
         {
             Theme.Init(app);
@@ -33,6 +34,35 @@ public static class TaskTests
             return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// Developer check: Murmur.exe --planonly out.txt asks the AI model for the plans of a few spoken tasks (web search,
+    /// Outlook) and writes them; nothing runs.
+    /// </summary>
+    private static async Task PlanOnlyAsync(Application app, string outPath)
+    {
+        var lines = new List<string>();
+        try
+        {
+            var settings = AppSettings.Load();
+            foreach (var phrase in new[]
+                     {
+                         "Open Chrome and search for when the Eiffel Tower was built",
+                         "Åbn Chrome og søg efter hvornår Eiffeltårnet blev bygget",
+                         "Google the weather in Copenhagen tomorrow",
+                         "Open Outlook and find the latest meal from MyProtein",
+                         "Åbn Outlook og find mailen fra Daniel og svar at det passer fint",
+                     })
+            {
+                var r = IntentRequest.From(phrase, "", phrase.Any(c => c is 'æ' or 'ø' or 'å') ? "da" : "en", new ActiveWindowInfo("explorer", "Desktop"), settings);
+                var (plan, error) = await TaskPlanner.PlanAsync(settings, r, CancellationToken.None);
+                lines.Add($"[{phrase}] => " + (plan == null ? "no plan: " + error : string.Join(" | ", plan.Steps.Select(s => s.Describe()))));
+            }
+        }
+        catch (Exception ex) { lines.Add("FAILED " + ex); }
+        System.IO.File.WriteAllLines(outPath, lines);
+        app.Shutdown();
     }
 
     private static int _pass, _fail;

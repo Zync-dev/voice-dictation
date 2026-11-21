@@ -363,7 +363,7 @@ public static class ReplyTargets
     {
         string app = ScreenReader.Pretty(host.App.Process);
         var focus = await ScreenReader.FocusAsync();
-        bool sameApp = focus != null && focus.ProcessId == ScreenReader.PidOf(host.Window);
+        bool sameApp = focus != null && ProcessFamily.Of(ScreenReader.PidOf(host.Window)).Contains(focus.ProcessId);
         // In a browser only a field of the page itself: never the address bar or the browser's own search box, where the
         // draft would go to a search engine and Enter would not send it.
         bool browser = IsBrowser(host.App);
@@ -386,7 +386,7 @@ public static class ReplyTargets
                 {
                     await Task.Delay(150, ct);
                     var now = await ScreenReader.FocusAsync();
-                    if (now is { Editable: true, Password: false } && now.ProcessId == ScreenReader.PidOf(host.Window) && (!browser || now.InWebDocument))
+                    if (now is { Editable: true, Password: false } && ProcessFamily.Of(ScreenReader.PidOf(host.Window)).Contains(now.ProcessId) && (!browser || now.InWebDocument))
                     {
                         await Task.Delay(120, ct); // let the reply field finish opening
                         await host.PasteAsync(draft, "Reply pasted, not sent");

@@ -50,6 +50,7 @@ public sealed record TaskStep(string Tool, IReadOnlyDictionary<string, string> A
         "summarize" => "Summarize the window",
         "scroll" => Arg("direction") switch { "top" => "Scroll to the top", "bottom" => "Scroll to the bottom", "up" => "Scroll up", _ => "Scroll down" },
         "press_key" => $"Press {TaskTools.KeyLabel(Arg("key"))}" + (Arg("key") == "enter" ? " (asks first)" : ""),
+        "web_search" => $"Search the web for “{Arg("query")}”",
         _ => Tool,
     };
 }
@@ -81,6 +82,7 @@ public static class TaskTools
         ("summarize", [], "summarize the window in front for the user, on the card"),
         ("scroll", ["direction"], "scroll the window in front: down, up, top or bottom"),
         ("press_key", ["key"], "press one key: tab, shift_tab, escape, up, down, left, right or enter"),
+        ("web_search", ["query"], "search the web (Google) for the query and show the results in the browser: Chrome, Edge or Firefox when the user named one (it is opened if needed), else the default browser. Always use this to search or look something up on the web - never open the browser, click into its address or search bar and type"),
     ];
 
     public static bool Known(string id) => All.Any(t => t.Id == id);
@@ -96,7 +98,7 @@ public static class TaskTools
     };
 
     /// <summary>Steps that change what is on screen: the window is read again after them.</summary>
-    public static bool ChangesScreen(string tool) => tool is "open_app" or "switch_app" or "wait_for_window" or "open_item" or "click" or "scroll" or "press_key" or "send";
+    public static bool ChangesScreen(string tool) => tool is "open_app" or "switch_app" or "wait_for_window" or "open_item" or "click" or "scroll" or "press_key" or "send" or "web_search";
 }
 
 /// <summary>The planning call and the checks on its answer.</summary>
@@ -122,6 +124,7 @@ public static class TaskPlanner
             - open_app and switch_app wait by themselves until the app has loaded (also when it was open already): do not add wait_for_window right after them for the same app.
             - To write to someone in a chat app: open_app, open_item for the conversation with that person, focus_field "message", type the text.
             - To answer an email or message: open_item for it when the user says which one (it waits for the list, takes the newest that fits and searches the app when the mail is not in view), then reply. Do not use type for replies.
+            - To search or look something up on the web ("søg efter …", "google …", "find ud af hvornår …", "search for …"): open_app for the browser the user named (if any), then web_search with the query in the user's words. Never focus_field and type into a browser to search.
             - When the user does not name an app, everything happens in the app in front: do not add open_app, switch_app or wait_for_window for an app the user did not name.
             - You never see the screen; the steps look at it themselves when they run. Keep names and the user's words as they said them.
             Answer with JSON only: {"steps": [{"tool": "<tool>", "args": {"<name>": "<value>"}}]}
@@ -199,6 +202,7 @@ public static class TaskPlanner
                 case "click" when clean.Arg("target").Length == 0:
                 case "focus_field" when clean.Arg("field").Length == 0:
                 case "type" when clean.Arg("text").Length == 0:
+                case "web_search" when clean.Arg("query").Length == 0:
                     return (null, "Murmur could not plan that. Say it another way.");
                 case "scroll" when !TaskTools.Directions.Contains(clean.Arg("direction")):
                     args["direction"] = "down"; break;
@@ -481,6 +485,7 @@ public static class TaskRunner
         "summarize" => "Summarizing…",
         "scroll" => "Scrolling…",
         "press_key" => $"Pressing {TaskTools.KeyLabel(step.Arg("key"))}…",
+        "web_search" => "Searching…",
         _ => "Working…",
     };
 
@@ -529,6 +534,39 @@ public static class TaskRunner
         return (read.Content, read.Content == null ? read.RefusedText : "");
     }
 
+    /// <summary>Browsers a web search can open in, by process name.</summary>
+    private static readonly string[] SearchBrowsers = ["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"];
+
+    /// <summary>
+    /// Opens a Google search for the query: in the browser the task is working in (opened just before, or in front),
+    /// else in the default browser. Only the search address is opened; nothing is clicked or typed, so it cannot land
+    /// in the wrong field.
+    /// </summary>
+    private static async Task<StepResult> WebSearchAsync(Context ctx, string query)
+    {
+        string url = "https://www.google.com/search?q=" + Uri.EscapeDataString(query);
+        string? browserExe = null;
+        try
+        {
+            string process = ScreenReader.ProcessOf(ctx.Target).ToLowerInvariant();
+            if (SearchBrowsers.Contains(process))
+                using (var p = System.Diagnostics.Process.GetProcessById(ScreenReader.PidOf(ctx.Target)))
+                    browserExe = p.MainModule?.FileName;
+        }
+        catch { /* the default browser below */ }
+        try
+        {
+            var start = browserExe != null
+                ? new System.Diagnostics.ProcessStartInfo(browserExe) { ArgumentList = { url }, UseShellExecute = false }
+                : new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true };
+            System.Diagnostics.Process.Start(start)?.Dispose();
+        }
+        catch (Exception ex) { return new StepResult(false, "The browser did not open: " + ex.Message); }
+        await Task.Delay(800, ctx.Ct);
+        Log.Write($"Task: web search opened in {(browserExe != null ? System.IO.Path.GetFileNameWithoutExtension(browserExe) : "the default browser")}");
+        return new StepResult(true, "searched");
+    }
+
     private static async Task<StepResult> RunStepAsync(Context ctx, TaskStep step)
     {
         var hf = ctx.Hf;
@@ -548,10 +586,11 @@ public static class TaskRunner
             case "open_item": return await OpenItemAsync(ctx, step.Arg("description"));
             case "click": return await ClickAsync(ctx, step.Arg("target"), item: false);
             case "focus_field": return await FocusFieldAsync(ctx, step.Arg("field"));
+            case "web_search": return await WebSearchAsync(ctx, step.Arg("query"));
             case "type":
             {
                 var focus = await ScreenReader.FocusAsync(800);
-                if (focus == null || focus.ProcessId != ScreenReader.PidOf(ctx.Target) || !focus.Editable)
+                if (focus == null || !ProcessFamily.Of(ScreenReader.PidOf(ctx.Target)).Contains(focus.ProcessId) || !focus.Editable)
                     return new StepResult(false, $"No text field has focus in {ctx.AppName}.");
                 var (outcome, why) = await hf.PasteForTaskAsync(step.Arg("text"), reply: false);
                 return outcome == PasteOutcome.Pasted ? new StepResult(true, "typed") : new StepResult(false, "Not typed. " + why);
@@ -1108,22 +1147,68 @@ public static class TaskRunner
         string title = ScreenReader.WindowTitle(ctx.Target);
         // The search key of Outlook only: classic Outlook's Ctrl+E, new Outlook's Alt+Q (also Outlook on the web in a
         // browser). Never in another app whose title happens to say "Outlook" (Word's Alt+Q is "Tell me").
-        (ushort[] Mods, ushort Key, string Label)? shortcut =
-            process == "outlook" ? (new[] { Control.Ctrl }, (ushort)'E', "Ctrl+E")
-            : process == "olk" || (browser || SearchKeyProcesses.Contains(process)) && title.Contains("Outlook", StringComparison.OrdinalIgnoreCase) ? (new[] { Control.Alt }, (ushort)'Q', "Alt+Q")
-            : null;
-        if (shortcut is not { } k) return null;
-        // What had the focus before the key: the box after it must be another one (a key that did nothing leaves the focus
-        // in a draft or a field, and that is never taken for the search box).
-        var before = await Worker.RunAsync(() => ContextReader.Focused(), 1500);
-        if (!await hf.PressChordAsync(k.Mods, k.Key, k.Label)) { Log.Write($"Task: {k.Label} not pressed: {await Control.WhyNotAsync(hf)} (in front: {Front()})"); return null; }
-        for (int i = 0; i < 5; i++)
+        // New Outlook and Outlook on the web use Alt+Q with "Outlook.com" shortcuts but Ctrl+E or F3 with "Outlook"
+        // (classic) shortcuts, a setting the user picks; each is tried until a search box has the focus.
+        bool newOutlook = process == "olk" || (browser || SearchKeyProcesses.Contains(process)) && title.Contains("Outlook", StringComparison.OrdinalIgnoreCase);
+        (ushort[] Mods, ushort Key, string Label)[] shortcuts =
+            process == "outlook" ? [(new[] { Control.Ctrl }, (ushort)'E', "Ctrl+E"), (Array.Empty<ushort>(), (ushort)0x72, "F3")]
+            : newOutlook ? [(new[] { Control.Alt }, (ushort)'Q', "Alt+Q"), (new[] { Control.Ctrl }, (ushort)'E', "Ctrl+E"), (Array.Empty<ushort>(), (ushort)0x72, "F3")]
+            : [];
+        foreach (var k in shortcuts)
         {
-            await Task.Delay(200 + 50 * i, ctx.Ct);
-            if (await SearchFieldFocusedAsync(ctx, null, before, byName) is { } box) return box;
+            // What had the focus before the key: the box after it must be another one (a key that did nothing leaves the
+            // focus in a draft or a field, and that is never taken for the search box).
+            var before = await Worker.RunAsync(() => ContextReader.Focused(), 1500);
+            if (!await hf.PressChordAsync(k.Mods, k.Key, k.Label)) { Log.Write($"Task: {k.Label} not pressed: {await Control.WhyNotAsync(hf)} (in front: {Front()})"); return null; }
+            for (int i = 0; i < 4; i++)
+            {
+                await Task.Delay(200 + 50 * i, ctx.Ct);
+                if (await SearchFieldFocusedAsync(ctx, null, before, byName) is { } box) { Log.Write($"Task: {k.Label} opened the search box"); return box; }
+            }
+            Log.Write($"Task: {k.Label} did not open a search box");
+        }
+        // New Outlook shows its search field only once it is clicked: click the control named "Search" / "Søg".
+        if (await ClickSearchControlAsync(ctx, browser) is { } clicked)
+        {
+            for (int i = 0; i < 5; i++)
+            {
+                await Task.Delay(200 + 50 * i, ctx.Ct);
+                if (await SearchFieldFocusedAsync(ctx, null, clicked, byName) is { } box) { Log.Write("Task: clicking the search control opened the search box"); return box; }
+            }
         }
         return null;
     }
+
+    /// <summary>
+    /// Clicks (Invoke) the app's own search control by its name ("Search", "Søg", "Search mail"), outside the open
+    /// message and, in a browser, inside the page. What had the focus before, or null when nothing was clicked.
+    /// </summary>
+    private static Task<AutomationElement?> ClickSearchControlAsync(Context ctx, bool browser) => Worker.RunAsync(() =>
+    {
+        var before = ContextReader.Focused();
+        var root = AutomationElement.FromHandle(WindowControl.Root(ctx.Target));
+        var cache = new CacheRequest();
+        foreach (var p in new AutomationProperty[] { AutomationElement.NameProperty, AutomationElement.ControlTypeProperty, AutomationElement.IsOffscreenProperty, AutomationElement.IsEnabledProperty, AutomationElement.IsInvokePatternAvailableProperty })
+            cache.Add(p);
+        AutomationElementCollection all;
+        using (cache.Activate())
+            all = root.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.IsInvokePatternAvailableProperty, true));
+        foreach (AutomationElement e in all)
+        {
+            var c = e.Cached;
+            if (c.IsOffscreen || !c.IsEnabled) continue;
+            string name = ItemFinder.Fold(c.Name ?? "");
+            if (!(name is "search" or "sog" or "soeg" || name.StartsWith("search ", StringComparison.Ordinal) || name.StartsWith("sog ", StringComparison.Ordinal))) continue;
+            if (NotSearch.IsMatch(name)) continue;
+            var (documents, inMessage) = Where(e);
+            if (inMessage || documents >= 2 || browser && documents == 0) continue;
+            try { ((InvokePattern)e.GetCurrentPattern(InvokePattern.Pattern)).Invoke(); }
+            catch { continue; }
+            Log.Write($"Task: clicked the {c.ControlType.ProgrammaticName.Replace("ControlType.", "")} named like a search control");
+            return before ?? root;
+        }
+        return null;
+    }, 5000);
 
     /// <summary>Browsers (Outlook on the web, Gmail): their own address bar is never the app's search box.</summary>
     private static readonly HashSet<string> Browsers = ["msedge", "chrome", "firefox", "brave", "opera", "vivaldi", "arc", "iexplore"];
@@ -1163,20 +1248,20 @@ public static class TaskRunner
     /// </summary>
     private static Task<AutomationElement?> SearchFieldFocusedAsync(Context ctx, AutomationElement? box, AutomationElement? before = null, AutomationElement? byName = null)
     {
-        int pid = ScreenReader.PidOf(ctx.Target);
+        var family = ProcessFamily.Of(ScreenReader.PidOf(ctx.Target));
         return Worker.RunAsync(() =>
         {
-            static bool TextBox(AutomationElement.AutomationElementInformation i, int pid) =>
-                i.ProcessId == pid && !i.IsPassword && (i.ControlType == ControlType.Edit || i.ControlType == ControlType.ComboBox);
+            static bool TextBox(AutomationElement.AutomationElementInformation i, HashSet<int> family) =>
+                family.Contains(i.ProcessId) && !i.IsPassword && (i.ControlType == ControlType.Edit || i.ControlType == ControlType.ComboBox);
             if (box != null)
             {
                 // The box itself says it has the focus (more reliable than asking for the focused element across processes).
                 var b = box.Current;
-                if (b.HasKeyboardFocus && TextBox(b, pid)) return box;
+                if (b.HasKeyboardFocus && TextBox(b, family)) return box;
                 // A combo box's own edit field took it.
                 var focused = ContextReader.Focused();
                 if (focused == null) return null;
-                if (!TextBox(focused.Current, pid)) return null;
+                if (!TextBox(focused.Current, family)) return null;
                 if (Automation.Compare(focused, box)) return box;
                 for (var p = TreeWalker.ControlViewWalker.GetParent(focused); p != null; p = TreeWalker.ControlViewWalker.GetParent(p))
                     if (Automation.Compare(p, box)) return focused;
@@ -1187,7 +1272,7 @@ public static class TaskRunner
             bool Fits(AutomationElement f)
             {
                 var i = f.Current;
-                if (!TextBox(i, pid)) return false;
+                if (!TextBox(i, family)) return false;
                 bool inBox = byName != null && (Automation.Compare(f, byName) || IsUnder(f, byName));
                 if (!inBox && before != null && Automation.Compare(f, before)) { Log.Write("Task: the search key did not move the focus"); return false; }
                 string name = ItemFinder.Fold(i.Name ?? "");
@@ -1197,14 +1282,14 @@ public static class TaskRunner
                 return !inMessage && documents < 2;
             }
             var e = ContextReader.Focused();
-            if (e != null && TextBox(e.Current, pid)) return Fits(e) ? e : null;
+            if (e != null && TextBox(e.Current, family)) return Fits(e) ? e : null;
             // The focused element as UI Automation reports it can lag behind: ask the window which text box has the focus.
             var root = AutomationElement.FromHandle(WindowControl.Root(ctx.Target));
             var inWindow = root.FindFirst(TreeScope.Descendants, new AndCondition(
                 new PropertyCondition(AutomationElement.HasKeyboardFocusProperty, true),
                 new OrCondition(new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit), new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ComboBox))));
             if (inWindow != null && Fits(inWindow)) return inWindow;
-            if (e != null) Log.Write($"Task: the focus after the search key is a {e.Current.ControlType.ProgrammaticName} in {(e.Current.ProcessId == pid ? "the app" : "another process")}");
+            if (e != null) Log.Write($"Task: the focus after the search key is a {e.Current.ControlType.ProgrammaticName} in {(family.Contains(e.Current.ProcessId) ? "the app" : "another process")}");
             return null;
         }, 2000);
     }
@@ -1316,7 +1401,7 @@ public static class TaskRunner
         bool focused = await Worker.RunAsync(() => { hit.Element.SetFocus(); return true; }, 1500);
         await Task.Delay(150, ctx.Ct);
         var focus = await ScreenReader.FocusAsync();
-        if (!focused || focus == null || focus.ProcessId != ScreenReader.PidOf(ctx.Target)) return new StepResult(false, $"“{spoken}” in {ctx.AppName} did not take the focus.");
+        if (!focused || focus == null || !ProcessFamily.Of(ScreenReader.PidOf(ctx.Target)).Contains(focus.ProcessId)) return new StepResult(false, $"“{spoken}” in {ctx.AppName} did not take the focus.");
         if (focus.Password) return new StepResult(false, "That is a password field.");
         return focus.Editable ? new StepResult(true, $"focused {hit.Name}") : new StepResult(false, $"“{spoken}” in {ctx.AppName} does not take text.");
     }

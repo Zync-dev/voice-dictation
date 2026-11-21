@@ -275,7 +275,7 @@ public sealed class SendReplyIntent : VoiceIntent
         string name = ScreenReader.Pretty(reply.Process);
         if (ScreenReader.PidOf(Native.GetForegroundWindow()) != reply.ProcessId) return (false, $"{name} is not in front.");
         var field = await UiControl.FocusedFieldAsync();
-        if (field == null || field.ProcessId != reply.ProcessId) return (false, $"The reply field in {name} does not have focus.");
+        if (field == null || !ProcessFamily.Of(reply.ProcessId).Contains(field.ProcessId)) return (false, $"The reply field in {name} does not have focus.");
         if (field.Password) return (false, "The focused field is a password field.");
         if (!field.Editable) return (false, $"The reply field in {name} does not have focus.");
         if (ReplyTargets.IsBrowser(new ActiveWindowInfo(reply.Process, reply.Title)) && !field.InWebDocument) return (false, $"The focus is in {name}'s own bar, not the reply field.");

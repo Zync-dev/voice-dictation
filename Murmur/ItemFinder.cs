@@ -32,6 +32,8 @@ public static class ItemFinder
         "re", "regarding", "angaende", "vedrorende", "sent", "sendt", "sendte", "me", "mig", "jeg", "just", "lige", "fik", "got", "received", "modtog", "har",
         "have", "has", "new", "ny", "nye", "nyt", "open", "abn", "aben", "find", "finde", "inbox", "indbakke", "indbakken", "outlook", "gmail", "please", "lige",
         "one", "it", "this", "dette", "denne", "her", "there",
+        // How the speech model sometimes hears "mail" / "mailen": "the latest meal from MyProtein".
+        "meal", "meals", "male", "mel", "mejl", "mejlen", "mails", "mailet",
     }, StringComparer.Ordinal);
 
     /// <summary>Words that mean the newest one: the first that fits, from the top of the list.</summary>
@@ -222,13 +224,14 @@ public static class ItemFinder
             if (n == 0) continue;
             double score = weight.Sum() / words.Count + (MailLike(c) ? 0.001 : 0);
             // The sender the user named counts more where the row shows its sender than in its subject or preview.
+            double cover = n / (double)words.Count;
             if (sender.Count > 0)
             {
                 var from = SenderPart(c.Text);
                 string fromJoined = string.Concat(from);
                 if (sender.All(w => Weight(w, from, fromJoined) > 0)) score += 0.1;
             }
-            scored.Add((c, score, n / (double)words.Count));
+            scored.Add((c, score, cover));
         }
         var partial = scored.Select(s => s.C).ToList();
         var good = scored.Where(s => s.Cover >= 0.6).ToList();

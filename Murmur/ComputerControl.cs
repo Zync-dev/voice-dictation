@@ -694,7 +694,7 @@ public static class UiControl
     {
         var focused = ContextReader.Focused();
         if (focused == null) return null;
-        try { if (focused.Current.ProcessId != root.Current.ProcessId) return null; } catch { return null; }
+        try { if (!ProcessFamily.Of(root.Current.ProcessId).Contains(focused.Current.ProcessId)) return null; } catch { return null; }
         var walker = TreeWalker.ControlViewWalker;
         for (var e = focused; e != null; e = walker.GetParent(e))
         {
