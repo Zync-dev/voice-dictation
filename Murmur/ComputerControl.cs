@@ -452,6 +452,8 @@ public static class UiControl
     /// that is ten times faster. <paramref name="itemsOnly"/> skips menus and toolbars. Null when the app did not answer
     /// within the budget (a hung or just-started app: try again).
     /// </summary>
+    /// <remarks>List rows with no click pattern (which open with the focus and Enter) are found only with <paramref name="itemsOnly"/>:
+    /// a plain click could not click them.</remarks>
     public static Task<Scan?> ScanAsync(IntPtr hwnd, int budgetMs = BudgetMs, int maxNodes = MaxNodes, bool itemsOnly = false) => Worker.RunAsync(() =>
     {
         var watch = Stopwatch.StartNew();
@@ -497,8 +499,9 @@ public static class UiControl
                 {
                     bool clickPattern = Cached(e, AutomationElement.IsInvokePatternAvailableProperty) || Cached(e, AutomationElement.IsTogglePatternAvailableProperty)
                         || Cached(e, AutomationElement.IsSelectionItemPatternAvailableProperty) || Cached(e, AutomationElement.IsExpandCollapsePatternAvailableProperty);
-                    // A list row without a pattern still opens with the keyboard when it takes the focus (some web mail lists).
-                    bool openable = clickPattern || isItem && inList && info.IsKeyboardFocusable;
+                    // A list row without a pattern still opens with the keyboard when it takes the focus (some web mail lists):
+                    // only for an open step (itemsOnly), which has the focus-and-Enter fallback.
+                    bool openable = clickPattern || itemsOnly && isItem && inList && info.IsKeyboardFocusable;
                     if (openable && (name.Length > 0 || isItem))
                     {
                         if (isItem)
@@ -613,13 +616,17 @@ public static class UiControl
     /// Clicks an element the way UI Automation does (Invoke, else Toggle, Select or Expand), without moving the mouse.
     /// On a thread of its own with a short wait: an Invoke that opens a modal dialog can block until the dialog closes.
     /// </summary>
-    public static async Task<bool> ClickAsync(AutomationElement e)
+    /// <remarks><paramref name="selectFirst"/>: a row of a mail list is selected before it is invoked: in classic Outlook a
+    /// row's Invoke opens the mail in a window of its own, while Select shows it in the reading pane (and in a Chromium
+    /// app, new Outlook or the web, Select does what a click does).</remarks>
+    public static async Task<bool> ClickAsync(AutomationElement e, bool selectFirst = false)
     {
         var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
             try
             {
+                if (selectFirst && e.TryGetCurrentPattern(SelectionItemPattern.Pattern, out var first)) { ((SelectionItemPattern)first).Select(); done.TrySetResult(true); return; }
                 if (e.TryGetCurrentPattern(InvokePattern.Pattern, out var ip)) { ((InvokePattern)ip).Invoke(); done.TrySetResult(true); return; }
                 if (e.TryGetCurrentPattern(TogglePattern.Pattern, out var tp)) { ((TogglePattern)tp).Toggle(); done.TrySetResult(true); return; }
                 if (e.TryGetCurrentPattern(SelectionItemPattern.Pattern, out var sp)) { ((SelectionItemPattern)sp).Select(); done.TrySetResult(true); return; }

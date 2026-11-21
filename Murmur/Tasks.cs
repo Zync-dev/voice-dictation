@@ -410,11 +410,17 @@ public static class TaskRunner
                 // An app that was just opened or brought forward: wait until its window has loaded (a list that is there
                 // and has stopped changing) before the next step looks in it. In front is not the same as ready: new
                 // Outlook, Teams and Slack draw their content seconds after the window appears.
-                if (step.Tool is "open_app" or "switch_app" or "wait_for_window" && i < steps.Count - 1 && (NeedsLook(steps[i + 1].Tool) || steps[i + 1].Tool is "scroll" or "press_key"))
-                    await WaitUntilReadyAsync(ctx);
-                // The window as it is now, for a next step that reads it (and so the card says what is being read).
-                if (TaskTools.ChangesScreen(step.Tool) && i < steps.Count - 1 && NeedsRead(steps[i + 1].Tool))
-                    await ObserveAsync(ctx);
+                // Esc or "stop" during these waits ends the run like a stop during a step (the card says where it stopped).
+                try
+                {
+                    if (step.Tool is "open_app" or "switch_app" or "wait_for_window" && i < steps.Count - 1 && (NeedsLook(steps[i + 1].Tool) || steps[i + 1].Tool is "scroll" or "press_key"))
+                        await WaitUntilReadyAsync(ctx);
+                    // The window as it is now, for a next step that reads it (and so the card says what is being read).
+                    if (TaskTools.ChangesScreen(step.Tool) && i < steps.Count - 1 && NeedsRead(steps[i + 1].Tool))
+                        await ObserveAsync(ctx);
+                }
+                catch (OperationCanceledException) when (run.Cancel.IsCancellationRequested) { break; }
+                if (run.Cancel.IsCancellationRequested) break;
             }
             if (run.Cancel.IsCancellationRequested)
             {
@@ -732,11 +738,11 @@ public static class TaskRunner
     /// <summary>For the developer checks: the latest item a step picked.</summary>
     internal static string? LastPicked;
 
-    private static async Task<bool> ClickNowAsync(Context ctx, UiControl.Clickable pick)
+    private static async Task<bool> ClickNowAsync(Context ctx, UiControl.Clickable pick, bool selectFirst = false)
     {
         // Checked again right before the click: the window is still there and still not an excluded app.
         if (!WindowControl.IsWindow(ctx.Target) || ScreenReader.IsExcluded(ScreenReader.ProcessOf(ctx.Target), ctx.Hf.Settings)) return false;
-        bool ok = await UiControl.ClickAsync(pick.Element);
+        bool ok = await UiControl.ClickAsync(pick.Element, selectFirst);
         if (ok) ctx.Hf.KeysSent.Add("click " + pick.Name);
         return ok;
     }
@@ -825,6 +831,7 @@ public static class TaskRunner
     /// Finds the item a description means, while the window may still be loading: walks the window until an item fits, or
     /// the list is there and has stopped changing. Null when the window never answered (a hung app).
     /// </summary>
+    /// <remarks>With <paramref name="changed"/> (after a search), only mail rows count: never a suggestion in the search box's dropdown or a folder.</remarks>
     private static async Task<(List<UiControl.Clickable> Items, ItemMatch Match)?> FindItemAsync(Context ctx, string description, TimeSpan limit, Func<List<UiControl.Clickable>, bool>? changed = null)
     {
         var watch = Stopwatch.StartNew();
@@ -840,6 +847,7 @@ public static class TaskRunner
             if (scan != null)
             {
                 var items = Candidates(scan.Found);
+                if (changed != null) items = items.Where(ItemFinder.MailLike).ToList();
                 var match = ItemFinder.Match(description, items);
                 bool fresh = changed?.Invoke(items) ?? true; // after a search: only the results count
                 if (fresh && match.Best != null) return (items, match);
@@ -858,7 +866,7 @@ public static class TaskRunner
 
     /// <summary>
     /// open_item: the mail, conversation or row the description means. First by its words in the list as it is (waiting
-    /// for the list to load); then one AI call by meaning; then, when exactly one row has one of the words, that one; then
+    /// for the list to load); then one AI call by meaning; then (with no AI) the one row from the sender the user named; then
     /// the app's own search box (typing the name and pressing Enter there is safe and can be undone); only then it fails.
     /// </summary>
     private static async Task<StepResult> OpenItemAsync(Context ctx, string description)
@@ -872,12 +880,24 @@ public static class TaskRunner
         var (items, match) = found.Value;
         var pick = match.Best;
         if (pick != null) LastHow = "words";
-        if (pick == null && items.Count > 0)
+        // Several rows fit the words equally well and the user did not say the newest: the AI picks among only those
+        // (with no AI, or no answer, the top one: they all have every word).
+        if (pick != null && match.Ties.Count > 1 && !match.Recent && CanPick(ctx))
         {
+            if (await PickByMeaningAsync(ctx, description, match.Ties, "the email, message, conversation or list item") is { } tie) { pick = tie; LastHow = "ai among ties"; }
+        }
+        bool asked = false;
+        if (pick == null && items.Count > 0 && CanPick(ctx))
+        {
+            asked = true;
             pick = await PickByMeaningAsync(ctx, description, AiCandidates(ctx, items, description), "the email, message, conversation or list item");
             if (pick != null) LastHow = "ai";
         }
-        if (pick == null && match.Partial.Count == 1) { pick = match.Partial[0]; LastHow = "one word"; }
+        // One row has only some of the words: taken only when it is the one row from the sender the user named, and no AI
+        // said that none fits (else the app's search, below, looks for the sender).
+        var sender = ItemFinder.SenderWords(description);
+        if (pick == null && !asked && sender.Count > 0 && match.Partial.Where(c => ItemFinder.HasAll(c, sender)).ToList() is [var only])
+        { pick = only; LastHow = "one word"; }
         if (pick == null && match.Search.Length > 0)
         {
             pick = await SearchAsync(ctx, description, match.Search, items);
@@ -887,6 +907,9 @@ public static class TaskRunner
         Log.Write($"Task: open_item found “{Short(pick.Text, 80)}” by {LastHow} ({items.Count} items)");
         return await OpenPickAsync(ctx, pick, description);
     }
+
+    /// <summary>Whether an AI call can pick an item by meaning (an AI model is set up, and not in the offline checks).</summary>
+    private static bool CanPick(Context ctx) => !NoAiPick && ctx.Hf.Llm.IsConfigured;
 
     /// <summary>The rows the AI pick sees: in a mail app, only the message rows (not the folders), in screen order.</summary>
     private static List<UiControl.Clickable> AiCandidates(Context ctx, List<UiControl.Clickable> items, string description)
@@ -923,7 +946,8 @@ public static class TaskRunner
 
     private static async Task<bool> OpenNowAsync(Context ctx, UiControl.Clickable pick)
     {
-        if (await ClickNowAsync(ctx, pick)) return true;
+        // A mail row is selected (the reading pane shows it), not invoked (classic Outlook would open it in its own window).
+        if (await ClickNowAsync(ctx, pick, selectFirst: ItemFinder.MailLike(pick) && pick.Kind is "ListItem" or "DataItem")) return true;
         if (pick.Kind is not ("ListItem" or "DataItem" or "TreeItem")) return false;
         // A row with no pattern to open it: the focus on that row, then Enter, as the keyboard opens a mail. Enter goes only
         // to the row itself (checked right before the key), never to a field or a button.
@@ -957,6 +981,8 @@ public static class TaskRunner
         if (!await InFrontAsync(ctx)) { Log.Write($"Task: {app} is not in front for the search (in front: {Front()})"); return null; }
         var box = await FocusSearchBoxAsync(ctx);
         if (box == null) { Log.Write($"Task: no search box in {app}"); return null; }
+        // Ctrl+A and the paste only while the search box itself has the focus (never a draft or a field that kept it).
+        if (await SearchFieldFocusedAsync(ctx, box) == null) { Log.Write("Task: the search box lost the focus; nothing typed"); return null; }
         await hf.PressChordAsync([Control.Ctrl], (ushort)'A', "Ctrl+A"); // whatever was searched before goes
         var (outcome, why) = await hf.PasteForTaskAsync(words, reply: false, remember: false);
         if (outcome != PasteOutcome.Pasted) { Log.Write($"Task: search not typed: {why} (in front: {Front()})"); return null; }
@@ -966,20 +992,45 @@ public static class TaskRunner
         if (!await hf.PressChordAsync([], 0x0D, "Enter", enterIsSafe: true)) return null;
         hf.KeysSent.Add("search " + words);
         LastSearch = words;
-        // The results: the list has changed from what it was, and then stopped changing.
-        var old = new HashSet<string>(before.Select(c => c.Text));
-        bool Changed(List<UiControl.Clickable> now) => now.Count != before.Count || now.Any(c => !old.Contains(c.Text));
+        // The results: the mail rows are mostly others than before (a server search can take seconds, and meanwhile the old
+        // list stays; a suggestion dropdown or a fuller look at the same list is not a result), then they stop changing.
+        var oldRows = before.Where(ItemFinder.MailLike).Select(c => c.Text).ToList();
+        var old = new HashSet<string>(oldRows);
+        bool Changed(List<UiControl.Clickable> now)
+        {
+            var rows = now.Where(ItemFinder.MailLike).ToList();
+            if (rows.Count == 0) return false;
+            if (oldRows.Count == 0) return true;
+            int still = rows.Count(c => old.Contains(c.Text));
+            return still * 2 < oldRows.Count || rows[0].Text != oldRows[0] && rows.Count != oldRows.Count;
+        }
         await Task.Delay(500, ctx.Ct);
         var found = await FindItemAsync(ctx, description, TimeSpan.FromSeconds(8), Changed);
         if (found == null) return null;
         var (items, match) = found.Value;
-        if (!Changed(items)) return null;
-        if (match.Best != null) return match.Best;
-        if (match.Partial.FirstOrDefault(ItemFinder.MailLike) is { } part) return part;
-        // The app found these for the words: its top result, when it is a mail row.
+        if (!Changed(items)) { Log.Write("Task: the search showed no new results"); return null; }
+        // Only a result that has the user's words (most of them, or the sender's name / the searched words): never just the
+        // top row, which may be a mail that came in meanwhile.
         var key = ItemFinder.KeyWords(words).Words;
-        return items.FirstOrDefault(c => ItemFinder.MailLike(c) && (key.Count == 0 || ItemFinder.Fold(c.Text).Contains(key[0], StringComparison.Ordinal)))
-            ?? items.FirstOrDefault(ItemFinder.MailLike);
+        var pick = match.Best ?? items.FirstOrDefault(c => ItemFinder.HasAll(c, key));
+        if (pick != null && await InsideAsync(pick.Element, box)) { Log.Write("Task: the result is inside the search box (a suggestion); not opened"); return null; }
+        return pick;
+    }
+
+    /// <summary>Whether an element is inside another (a suggestion in a search box's dropdown).</summary>
+    private static async Task<bool> InsideAsync(AutomationElement e, AutomationElement container)
+    {
+        return await Worker.RunAsync(() =>
+        {
+            try
+            {
+                int depth = 0;
+                for (var p = TreeWalker.ControlViewWalker.GetParent(e); p != null && depth < 12; p = TreeWalker.ControlViewWalker.GetParent(p), depth++)
+                    if (Automation.Compare(p, container)) return true;
+            }
+            catch { }
+            return false;
+        }, 1500);
     }
 
     /// <summary>For the developer checks: the words the latest search typed.</summary>
@@ -1010,6 +1061,8 @@ public static class TaskRunner
     private static async Task<AutomationElement?> FocusSearchBoxAsync(Context ctx)
     {
         var hf = ctx.Hf;
+        string process = ScreenReader.ProcessOf(ctx.Target).ToLowerInvariant();
+        bool browser = Browsers.Contains(process);
         var byName = await Worker.RunAsync(() =>
         {
             var root = AutomationElement.FromHandle(WindowControl.Root(ctx.Target));
@@ -1020,20 +1073,28 @@ public static class TaskRunner
             using (cache.Activate())
                 boxes = root.FindAll(TreeScope.Descendants, new OrCondition(
                     new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit), new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ComboBox)));
-            AutomationElement? best = null;
-            int bestScore = 0;
+            var ranked = new List<(AutomationElement Box, int Score)>();
             foreach (AutomationElement b in boxes)
             {
                 var c = b.Cached;
                 if (c.IsPassword || c.IsOffscreen || !c.IsEnabled) continue;
                 string name = ItemFinder.Fold(c.Name ?? "");
-                if (!SearchName.IsMatch(name)) continue;
+                // Never a browser's address bar ("Address and search bar", "Adresse- og søgelinje"), never a field of a draft.
+                if (!SearchName.IsMatch(name) || NotSearch.IsMatch(name)) continue;
                 int score = name is "search" or "sog" or "soeg" ? 3 : name.StartsWith("search", StringComparison.Ordinal) || name.StartsWith("sog", StringComparison.Ordinal) ? 2 : 1;
-                if (score > bestScore) { best = b; bestScore = score; }
+                if (score < 2) continue; // "Find people", "Filter": not the mail search; rather none
+                ranked.Add((b, score));
             }
-            if (best == null) return null;
-            best.SetFocus();
-            return best;
+            // The best by its name that is where the app's own search is: in a browser, inside the page (not the browser's
+            // own bar); never inside the open message (a mail's own form, a nested document or the reading pane).
+            foreach (var (b, _) in ranked.OrderByDescending(r => r.Score))
+            {
+                var (documents, inMessage) = Where(b);
+                if (inMessage || documents >= 2 || browser && documents == 0) continue;
+                b.SetFocus();
+                return b;
+            }
+            return null;
         }, 5000);
         if (byName != null)
         {
@@ -1044,27 +1105,63 @@ public static class TaskRunner
             }
             // Outlook's box opens its own field on a click: the key below puts the focus there.
         }
-        string process = ScreenReader.ProcessOf(ctx.Target).ToLowerInvariant();
         string title = ScreenReader.WindowTitle(ctx.Target);
+        // The search key of Outlook only: classic Outlook's Ctrl+E, new Outlook's Alt+Q (also Outlook on the web in a
+        // browser). Never in another app whose title happens to say "Outlook" (Word's Alt+Q is "Tell me").
         (ushort[] Mods, ushort Key, string Label)? shortcut =
             process == "outlook" ? (new[] { Control.Ctrl }, (ushort)'E', "Ctrl+E")
-            : process == "olk" || title.Contains("Outlook", StringComparison.OrdinalIgnoreCase) ? (new[] { Control.Alt }, (ushort)'Q', "Alt+Q")
+            : process == "olk" || (browser || SearchKeyProcesses.Contains(process)) && title.Contains("Outlook", StringComparison.OrdinalIgnoreCase) ? (new[] { Control.Alt }, (ushort)'Q', "Alt+Q")
             : null;
         if (shortcut is not { } k) return null;
+        // What had the focus before the key: the box after it must be another one (a key that did nothing leaves the focus
+        // in a draft or a field, and that is never taken for the search box).
+        var before = await Worker.RunAsync(() => ContextReader.Focused(), 1500);
         if (!await hf.PressChordAsync(k.Mods, k.Key, k.Label)) { Log.Write($"Task: {k.Label} not pressed: {await Control.WhyNotAsync(hf)} (in front: {Front()})"); return null; }
         for (int i = 0; i < 5; i++)
         {
             await Task.Delay(200 + 50 * i, ctx.Ct);
-            if (await SearchFieldFocusedAsync(ctx, null) is { } box) return box;
+            if (await SearchFieldFocusedAsync(ctx, null, before, byName) is { } box) return box;
         }
         return null;
     }
 
+    /// <summary>Browsers (Outlook on the web, Gmail): their own address bar is never the app's search box.</summary>
+    private static readonly HashSet<string> Browsers = ["msedge", "chrome", "firefox", "brave", "opera", "vivaldi", "arc", "iexplore"];
+
+    /// <summary>For the developer checks: other processes whose window titled "Outlook" gets Alt+Q (the checks' fake Outlook).</summary>
+    internal static readonly HashSet<string> SearchKeyProcesses = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Names of fields that are never the search box: a browser's address bar, a draft's body, subject or recipients.</summary>
+    private static readonly Regex NotSearch = new(@"\b(?:address|adresse\w*|url|message body|body|brodtekst|subject|emne|to|til|cc|bcc|recipients?|modtager\w*|reply|svar)\b", RegexOptions.CultureInvariant);
+
+    /// <summary>Names of the parts of a mail app that show the open message (its fields are the message's, not the app's).</summary>
+    private static readonly Regex MessagePane = new(@"\b(?:reading pane|laeserude|laserude|message body|meddelelsestekst\w*|brodtekst|message content|beskedindhold)\b", RegexOptions.CultureInvariant);
+
+    /// <summary>How many documents an element is inside, and whether it is inside the open message (the reading pane or the message body).</summary>
+    private static (int Documents, bool InMessage) Where(AutomationElement e)
+    {
+        int documents = 0;
+        bool inMessage = false;
+        try
+        {
+            int depth = 0;
+            for (var p = TreeWalker.ControlViewWalker.GetParent(e); p != null && depth < 60; p = TreeWalker.ControlViewWalker.GetParent(p), depth++)
+            {
+                var c = p.Current;
+                if (c.ControlType == ControlType.Document) documents++;
+                if (MessagePane.IsMatch(ItemFinder.Fold(c.Name ?? ""))) inMessage = true;
+            }
+        }
+        catch { }
+        return (documents, inMessage);
+    }
+
     /// <summary>
-    /// The text box of the target app that has the keyboard focus (an Edit or ComboBox: not a document, so never a mail
-    /// body, and not a password field), or null. With <paramref name="box"/>: only when it is that box (or inside it).
+    /// The text box of the target app that has the keyboard focus (an Edit or ComboBox, not a password field), or null.
+    /// With <paramref name="box"/>: only when it is that box (or inside it). Without (after the search key): only a box
+    /// that is not <paramref name="before"/> (what had the focus before the key) and is named like a search box.
     /// </summary>
-    private static Task<AutomationElement?> SearchFieldFocusedAsync(Context ctx, AutomationElement? box)
+    private static Task<AutomationElement?> SearchFieldFocusedAsync(Context ctx, AutomationElement? box, AutomationElement? before = null, AutomationElement? byName = null)
     {
         int pid = ScreenReader.PidOf(ctx.Target);
         return Worker.RunAsync(() =>
@@ -1085,17 +1182,43 @@ public static class TaskRunner
                     if (Automation.Compare(p, box)) return focused;
                 return null;
             }
+            // After the search key: a text box that has just got the focus (not the one that had it before the key) and is
+            // named like a search box (or has no name), never a draft's body, subject or recipients, nor inside the message.
+            bool Fits(AutomationElement f)
+            {
+                var i = f.Current;
+                if (!TextBox(i, pid)) return false;
+                bool inBox = byName != null && (Automation.Compare(f, byName) || IsUnder(f, byName));
+                if (!inBox && before != null && Automation.Compare(f, before)) { Log.Write("Task: the search key did not move the focus"); return false; }
+                string name = ItemFinder.Fold(i.Name ?? "");
+                if (NotSearch.IsMatch(name)) { Log.Write("Task: the focus after the search key is a field that is not a search box"); return false; }
+                if (!inBox && name.Length > 0 && !SearchName.IsMatch(name)) { Log.Write("Task: the focus after the search key is a text box not named like a search box"); return false; }
+                var (documents, inMessage) = Where(f);
+                return !inMessage && documents < 2;
+            }
             var e = ContextReader.Focused();
-            if (e != null && TextBox(e.Current, pid)) return e;
+            if (e != null && TextBox(e.Current, pid)) return Fits(e) ? e : null;
             // The focused element as UI Automation reports it can lag behind: ask the window which text box has the focus.
             var root = AutomationElement.FromHandle(WindowControl.Root(ctx.Target));
             var inWindow = root.FindFirst(TreeScope.Descendants, new AndCondition(
                 new PropertyCondition(AutomationElement.HasKeyboardFocusProperty, true),
                 new OrCondition(new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit), new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ComboBox))));
-            if (inWindow != null && TextBox(inWindow.Current, pid)) return inWindow;
+            if (inWindow != null && Fits(inWindow)) return inWindow;
             if (e != null) Log.Write($"Task: the focus after the search key is a {e.Current.ControlType.ProgrammaticName} in {(e.Current.ProcessId == pid ? "the app" : "another process")}");
             return null;
         }, 2000);
+    }
+
+    private static bool IsUnder(AutomationElement e, AutomationElement container)
+    {
+        try
+        {
+            int depth = 0;
+            for (var p = TreeWalker.ControlViewWalker.GetParent(e); p != null && depth < 12; p = TreeWalker.ControlViewWalker.GetParent(p), depth++)
+                if (Automation.Compare(p, container)) return true;
+        }
+        catch { }
+        return false;
     }
 
     /// <summary>

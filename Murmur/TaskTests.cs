@@ -226,6 +226,20 @@ public static class TaskTests
         }
         var partial = ItemFinder.Match("mailen fra Daniel om kontrakten", rows);
         Check(lines, partial.Best == null && partial.Partial.Count == 2, $"[mailen fra Daniel om kontrakten]: no row has both words, two have one ({partial.Partial.Count})");
+        // The sender the user named wins over a newer mail that only mentions the name; a whole word over "Danielle".
+        var named = new List<UiControl.Clickable>
+        {
+            new("Today", "ListItem", "", null!, 0), new("I dag", "TreeItem", "", null!, 1),
+            new("Maria Jensen, Re: frokost med Daniel, 10:32, Hej", "ListItem", "", null!, 2),
+            new("Danielle Berg, Tilbud, 10:05, Hej", "ListItem", "", null!, 3),
+            new("Unread, Daniel Hansen, Tilbud, 09:10, Hej Lukas", "ListItem", "", null!, 4),
+        };
+        var fromDaniel = ItemFinder.Match("the email from Daniel", named);
+        Check(lines, fromDaniel.Best?.Text.StartsWith("Unread, Daniel Hansen") == true && fromDaniel.Ties.Count == 1, $"[the email from Daniel]: the row from Daniel, not one about him or from Danielle [{fromDaniel.Best?.Text}]");
+        Check(lines, !ItemFinder.MailLike(named[0]) && !ItemFinder.MailLike(named[1]) && ItemFinder.MailLike(named[2]), "a group header (Today, I dag) is not a mail row");
+        Check(lines, ItemFinder.Match("the latest email", named).Best?.Text.StartsWith("Maria") == true, "the latest email skips the group header");
+        var twoDaniel = ItemFinder.Match("the email from Daniel", rows);
+        Check(lines, twoDaniel.Ties.Count == 2, $"two rows from Daniel tie (for a pick by meaning): {twoDaniel.Ties.Count}");
         foreach (var (said, want) in new[] { ("mailen fra Peter om kontrakten", "peter"), ("the latest mail from MyProtein", "myprotein"), ("find the email from Hanne Lund about holidays", "hanne lund"), ("mailen om fakturaen", "fakturaen") })
             Check(lines, ItemFinder.SearchWords(said) == want, $"search words for [{said}] => [{ItemFinder.SearchWords(said)}]");
         Check(lines, ScreenReader.Pretty("olk") == "Outlook" && ScreenReader.Pretty("OUTLOOK") == "Outlook" && ScreenReader.Friendly("Microsoft Outlook") == "Outlook" && ScreenReader.Pretty("slack") == "Slack",
@@ -763,6 +777,7 @@ public static class TaskTests
     {
         lines.Add("== a mail client like new Outlook (slow start, rows named as Outlook names them, its own search) ==");
         TaskRunner.NoAiPick = true;
+        TaskRunner.SearchKeyProcesses.Add(Process.GetCurrentProcess().ProcessName);
         TaskPlan? next = null;
         TaskPlanner.TestPlan = _ => next;
         var keepRunning = AppCatalog.FakeRunning;
@@ -935,6 +950,7 @@ public static class TaskTests
         finally
         {
             AppCatalog.TestLaunch = null;
+            TaskRunner.SearchKeyProcesses.Clear();
             AppCatalog.FakeInstalled = [];
             AppCatalog.FakeRunning = keepRunning;
             if (launched != null) await launched.Quit();
