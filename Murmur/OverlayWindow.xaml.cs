@@ -19,7 +19,7 @@ namespace Murmur;
 /// </summary>
 public partial class OverlayWindow : Window
 {
-    private enum PillState { Hidden, Rest, Listening, HandsFree, Command, Writing, Info, Result, Rewriting, Error, Translate, Ask, Answer, Confirm, Reading }
+    private enum PillState { Hidden, Rest, Listening, HandsFree, Command, Writing, Info, Result, Rewriting, Error, Translate, Ask, Answer, Confirm, Reading, Task }
 
     private const int BarCount = 18;
     /// <summary>The card's width while it carries text, so lines wrap the same way from first word to last.</summary>
@@ -60,10 +60,10 @@ public partial class OverlayWindow : Window
     public event Action<string>? ActionRequested;
 
     /// <summary>True while a short message, the inserted text or a rewrite is on screen.</summary>
-    public bool IsShowingMessage => _state is PillState.Info or PillState.Error or PillState.Result or PillState.Rewriting or PillState.Answer or PillState.Confirm or PillState.Reading;
+    public bool IsShowingMessage => _state is PillState.Info or PillState.Error or PillState.Result or PillState.Rewriting or PillState.Answer or PillState.Confirm or PillState.Reading or PillState.Task;
 
     /// <summary>True while the card holds the inserted text and its keycaps (Esc closes it).</summary>
-    public bool IsShowingResult => _state is PillState.Result or PillState.Rewriting or PillState.Answer or PillState.Confirm or PillState.Reading; // edit-speak: Esc stops reading
+    public bool IsShowingResult => _state is PillState.Result or PillState.Rewriting or PillState.Answer or PillState.Confirm or PillState.Reading or PillState.Task; // edit-speak: Esc stops reading; tasks: Esc stops the task
 
     /// <summary>True while the card holds an answer from Ask, with its Copy / Insert / Esc keycaps.</summary>
     public bool IsShowingAnswer => _state == PillState.Answer;
@@ -632,7 +632,7 @@ public partial class OverlayWindow : Window
 
     private void PauseClose()
     {
-        if (_state is not (PillState.Result or PillState.Answer or PillState.Confirm) || !_returnTimer.IsEnabled) return;
+        if (_state is not (PillState.Result or PillState.Answer or PillState.Confirm or PillState.Task) || !_returnTimer.IsEnabled) return;
         _returnTimer.Stop();
         _closeLeft = _closesAt - DateTime.UtcNow;
         double scale = CountdownScale.ScaleX;
@@ -642,7 +642,7 @@ public partial class OverlayWindow : Window
 
     private void ResumeClose()
     {
-        if (_state is not (PillState.Result or PillState.Answer or PillState.Confirm) || _returnTimer.IsEnabled) return;
+        if (_state is not (PillState.Result or PillState.Answer or PillState.Confirm or PillState.Task) || _returnTimer.IsEnabled) return;
         // Leaving the card always gives a moment to read before it closes.
         var left = _closeLeft < TimeSpan.FromSeconds(1.5) ? TimeSpan.FromSeconds(1.5) : _closeLeft;
         _closesAt = DateTime.UtcNow + left;
@@ -744,7 +744,9 @@ public partial class OverlayWindow : Window
         ConfirmActions.Visibility = confirm ? Visibility.Visible : Visibility.Collapsed;
         bool reading = _state == PillState.Reading; // edit-speak
         ReadingActions.Visibility = reading ? Visibility.Visible : Visibility.Collapsed;
-        _keycapsShown = finish || cancel || actions || answer || confirm || reading;
+        bool task = _state == PillState.Task; // Hands-free: multi-step tasks
+        TaskActions.Visibility = task ? Visibility.Visible : Visibility.Collapsed;
+        _keycapsShown = finish || cancel || actions || answer || confirm || reading || task;
         UpdatePadding();
     }
 
@@ -802,6 +804,7 @@ public partial class OverlayWindow : Window
             PillState.Answer => Theme.OverlayAsk,
             PillState.Confirm => Theme.OverlayCommand,
             PillState.Reading => Theme.OverlayScript, // edit-speak
+            PillState.Task => Theme.OverlayCommand, // tasks
             _ => Theme.OverlayLine
         });
         SizeCard();
@@ -809,7 +812,7 @@ public partial class OverlayWindow : Window
         if (same) return; // e.g. download progress text updating: keep the loops running
         StopLoops();
         // The answer card has no tick, so the caret sits right next to its label.
-        Tick.Visibility = state is PillState.Answer or PillState.Confirm or PillState.Reading ? Visibility.Collapsed : Visibility.Visible;
+        Tick.Visibility = state is PillState.Answer or PillState.Confirm or PillState.Reading or PillState.Task ? Visibility.Collapsed : Visibility.Visible;
 
         switch (state)
         {
@@ -875,7 +878,7 @@ public partial class OverlayWindow : Window
                 else Tick.StrokeDashOffset = 0;
                 break;
 
-            case PillState.Answer or PillState.Confirm:
+            case PillState.Answer or PillState.Confirm or PillState.Task:
                 // The waveform folds into the caret, which stays lit in the colour of Ask: text to read, not text that landed.
                 FoldMeter(true, animate: true);
                 Animate(Tick, OpacityProperty, 0, Theme.DurQuick, Theme.EaseIn);

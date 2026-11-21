@@ -118,6 +118,7 @@ public partial class MainWindow : Window
         LoadHandsFreeSettings(); // Hands-free (MainWindow.HandsFree.cs)
         LoadControlSettings(); // Hands-free: computer control (MainWindow.Control.cs)
         LoadEditSpeakSettings(); // edit-speak: voice editing and read aloud (MainWindow.EditSpeak.cs)
+        LoadTaskSettings(); // Hands-free: multi-step tasks (MainWindow.Tasks.cs)
         LoadDeveloperSettings(); // ---- Developer mode (MainWindow.DevMode.cs) ----
 
         _loading = false;

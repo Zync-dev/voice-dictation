@@ -686,6 +686,31 @@
                 </Border>
                 <!-- ==== end Voice editing and read aloud ==== -->
 
+                <!-- ==== Hands-free: multi-step tasks (MainWindow.Tasks.cs) ==== -->
+                <TextBlock x:Name="TasksHeading" Style="{StaticResource SectionHeading}" Text="Tasks"/>
+                <Border Style="{StaticResource SettingsCard}">
+                    <StackPanel>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Do tasks of several steps"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="In command mode, say “find mailen fra Daniel om tilbuddet og svar at vi går videre” or “åbn Slack og skriv til Mette at jeg er forsinket”. In English: “find the email from James and reply that I can join”. The card shows the steps first and runs them only after you say “ja” or “kør”. Sending always asks again. Esc or “stop” stops the task. Needs an AI model."/>
+                            </StackPanel>
+                            <CheckBox x:Name="TasksEnabledBox" Grid.Column="1" Click="TaskSetting_Changed" AutomationProperties.Name="Do tasks of several steps"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Most steps in a task"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="A task that needs more steps is not started. Say it in smaller parts."/>
+                            </StackPanel>
+                            <ComboBox x:Name="TaskMaxStepsBox" Grid.Column="1" VerticalAlignment="Center" SelectionChanged="TaskSetting_Changed" AutomationProperties.Name="Most steps in a task"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+                <!-- ==== end Hands-free: multi-step tasks ==== -->
+
                 <!-- Microphone and language -->
                 <TextBlock Style="{StaticResource SectionHeading}" Text="Microphone and language"/>
                 <Border Style="{StaticResource SettingsCard}">

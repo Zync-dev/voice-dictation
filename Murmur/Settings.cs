@@ -235,6 +235,15 @@ public class AppSettings
 
     // ---- end Voice editing and read aloud ----
 
+    // ---- Hands-free: multi-step tasks ----
+
+    /// <summary>Command mode runs tasks of several steps: "find mailen fra Daniel og svar at vi går videre". The plan is shown first and runs only after a yes.</summary>
+    public bool TasksEnabled { get; set; } = true;
+    /// <summary>The most steps one task may have (3 to 12). A longer plan is refused, never cut short.</summary>
+    public int TaskMaxSteps { get; set; } = 8;
+
+    // ---- end Hands-free: multi-step tasks ----
+
     // ---- persistence ----
 
     /// <summary>The real data folder; speech models always live here so test runs do not download them again.</summary>
