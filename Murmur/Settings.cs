@@ -282,8 +282,8 @@ public class AppSettings
 
     /// <summary>
     /// When UI Automation does not show a control (new Outlook's search box), a picture of that one app window goes to the
-    /// AI provider's vision model, which says where it is. Null (the default) means on when the provider in use has a model
-    /// that reads pictures, off otherwise; true or false is the user's own choice.
+    /// AI provider's vision model, which says where it is. Null (the default) follows ScreenVision ("Let the AI model look at
+    /// the window", off by default) when the provider has a model that reads pictures; true or false is the user's own choice.
     /// </summary>
     public bool? SeeScreenWhenNeeded { get; set; }
     /// <summary>The vision model per provider id; none means the recommended one (VisionLocator.Model).</summary>

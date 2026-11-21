@@ -166,6 +166,24 @@ public static class VisionTests
         Check(lines, VisionLocator.ConfirmReason(VisionKind.Row, hit with { InMessage = true }, "the mail from Zalando")?.Contains("open message") == true, "a spot inside the open message asks first");
         Check(lines, VisionLocator.ConfirmReason(VisionKind.Field, hit with { InMessage = true, Answer = hit.Answer with { Label = "Reply" } }, "reply") == null, "a field in the reading pane (an inline reply box) does not ask");
         Check(lines, VisionLocator.ConfirmReason(VisionKind.Button, hit with { Answer = hit.Answer with { Label = "Move to folder" } }, "Archive")?.Contains("closest") == true, "a label that is not what was said asks first");
+        // What Windows says is at the spot counts over the model's label.
+        Check(lines, VisionLocator.ConfirmReason(VisionKind.Button, hit with { UnderName = "Delete", UnderKind = "Button" }, "Archive")?.Contains("Windows says the control there is “Delete”") == true,
+            "the model says “Archive”, UI Automation says the button there is “Delete”: asks first");
+        Check(lines, VisionLocator.ConfirmReason(VisionKind.Button, hit with { UnderName = "Move to folder", UnderKind = "Button" }, "Archive")?.Contains("Windows says") == true,
+            "UI Automation names another control at the spot: asks first");
+        Check(lines, VisionLocator.ConfirmReason(VisionKind.Button, hit with { UnderName = "Archive", UnderKind = "Button" }, "Archive") == null, "UI Automation agrees with the label: no question");
+        Check(lines, VisionLocator.ConfirmReason(VisionKind.SearchBox, hit with { Answer = hit.Answer with { Label = "Search" }, UnderName = "Empty folder", UnderKind = "Button" }, "search box") != null,
+            "a 'search box' over an Empty folder button is not clicked as a search box");
+        Check(lines, VisionLocator.ConfirmReason(VisionKind.Row, hit with { Answer = hit.Answer with { Label = "Zalando" } }, "the mail from Zalando")?.Contains("could not read that row") == true
+                     && VisionLocator.ConfirmReason(VisionKind.Row, hit with { Answer = hit.Answer with { Label = "Zalando" }, UnderName = "Unread, Zalando, Black Friday deal sent today, 09:12", UnderKind = "ListItem" }, "the mail from Zalando") == null,
+            "a row UI Automation cannot read asks first; a readable row (with “sent” in its subject) does not");
+        Check(lines, VisionLocator.Sanity(VisionKind.Row, new VisionAnswer(true, 0, 106, 380, 62, "", 0.6), 960, 600)?.Contains("not sure") == true, "a row is opened only when the model is quite sure (0.6 is not enough)");
+        Check(lines, VisionLocator.Question(VisionKind.Row, "the mail from Jens").Contains("\"found\": false") && !VisionLocator.Question(VisionKind.Row, "x").Contains("best matches"),
+            "the row question asks for a row that matches, else found false (not the closest one)");
+        var look = new[] { 200, 200, 200, 200, 200, 200, 90, 90, 90, 90, 90, 90, 200, 200, 200, 200, 200, 200 };
+        var caret = (int[])look.Clone(); caret[7] = 60;
+        var other = look.Select((v, i) => i % 2 == 0 ? 30 : v).ToArray();
+        Check(lines, VisionLocator.SameLook(look, caret) && !VisionLocator.SameLook(look, other), "the spot's look: a blinking caret is the same, another control there is not");
 
         // The answer as logs and reports keep it.
         string rowJson = VisionLocator.SafeJson(new VisionAnswer(true, 1, 2, 300, 60, "Zalando Black Friday", 0.8), VisionKind.Row, "the mail from Zalando");
@@ -195,7 +213,10 @@ public static class VisionTests
         }
         var groq = S(AiProviders.GroqId);
         var g = VisionLocator.Model(groq);
-        Check(lines, g.Model == "qwen/qwen3.8-27b" && g.Pending && VisionLocator.Enabled(groq), $"Groq before its live list is known: {g.Model}, checked against the key's list on first use; on by default");
+        Check(lines, g.Model == "qwen/qwen3.8-27b" && g.Pending && !VisionLocator.Enabled(groq), $"Groq before its live list is known: {g.Model}, checked against the key's list on first use; off until turned on");
+        groq.ScreenVision = true;
+        Check(lines, VisionLocator.Enabled(groq), "never chosen, it follows “Let the AI model look at the window” (on there: on here)");
+        groq.ScreenVision = false;
         groq.AiModelCache[AiProviders.GroqId] = new AiModelList { Fetched = DateTime.Now, Ids = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "allam-2-7b"] };
         g = VisionLocator.Model(groq);
         Check(lines, g.Model == "qwen/qwen3.8-27b" && !g.Pending, $"Groq whose key lists a model that reads pictures: {g.Model}");
@@ -209,7 +230,7 @@ public static class VisionTests
         foreach (var (id, want) in new[] { (AiProviders.OpenAiId, "gpt-6-luna"), (AiProviders.AnthropicId, "claude-opus-5-5"), (AiProviders.GeminiId, "gemini-3.1-flash-lite"), (AiProviders.MistralId, "mistral-small-latest") })
         {
             var s = S(id);
-            Check(lines, VisionLocator.Model(s).Model == want && VisionLocator.Enabled(s), $"{id}: the recommended model that reads pictures is preselected: {VisionLocator.Model(s).Model}");
+            Check(lines, VisionLocator.Model(s).Model == want && !VisionLocator.Enabled(s), $"{id}: the recommended model that reads pictures is preselected: {VisionLocator.Model(s).Model}; no picture goes out until the user turns it on");
         }
         var chosen = S(AiProviders.OpenAiId);
         chosen.VisionModels[AiProviders.OpenAiId] = "gpt-6.2-sol";
@@ -455,6 +476,31 @@ public static class VisionTests
             var st = await host.State();
             Check(lines, click && st.GetProperty("search").GetBoolean() && how == "ui", $"the click lands in the painted search box, its editor gets the focus, and UI Automation sees an editable field ({how}) [{st.GetRawText()}]");
             await host.Send("reset");
+
+            // The window moved, or the spot looks different, since the picture: no click.
+            if (found.Hit is { Frame: { } shotFrame } fh)
+            {
+                int clicksBefore = posted.Clicks.Count;
+                bool moved = await VisionLocator.ClickAsync(s, host.Hwnd, fh with { Frame = shotFrame with { Left = shotFrame.Left + 60 } }, CancellationToken.None);
+                bool changed = await VisionLocator.ClickAsync(s, host.Hwnd, fh with { Patch = fh.Patch!.Select(v => 255 - v).ToArray() }, CancellationToken.None);
+                bool same = await VisionLocator.ClickAsync(s, host.Hwnd, fh, CancellationToken.None);
+                Check(lines, !moved && !changed && same && posted.Clicks.Count == clicksBefore + 1, $"a click after the window moved or the spot changed is refused; the unchanged spot is clicked (moved {moved}, changed {changed}, same {same})");
+                await host.Send("reset");
+            }
+            else Check(lines, false, "the hit keeps the window's frame and the spot's look");
+
+            // A draft (a text box) already has the focus; the vision click lands on something that takes none.
+            string drafted = await host.Send("draft");
+            var draft = await Task.Run(() => System.Windows.Automation.AutomationElement.FromHandle(host.Hwnd).FindFirst(System.Windows.Automation.TreeScope.Descendants,
+                new System.Windows.Automation.PropertyCondition(System.Windows.Automation.AutomationElement.HasKeyboardFocusProperty, true)));
+            var archiveHit = new VisionHit(new VisionAnswer(true, 0, 0, 10, 10, "Archive", 0.9), rects["archive"], rects["archive"].Center, false, false);
+            await VisionLocator.ClickAsync(s, host.Hwnd, archiveHit, CancellationToken.None);
+            string? atArchive = await VisionLocator.EditableFocusAsync(host.Hwnd, rects["archive"], 500, draft);
+            string? stayed = await VisionLocator.EditableFocusAsync(host.Hwnd, rects["subject"], 500, draft);
+            string? noGuard = await VisionLocator.EditableFocusAsync(host.Hwnd, rects["subject"], 500);
+            Check(lines, drafted == "focused" && draft != null && atArchive == null && stayed == null && noGuard == "ui",
+                $"the focus stayed in a draft: not taken for the box that was clicked (at the box {atArchive ?? "no"}, the same text box {stayed ?? "no"}; without the guard {noGuard})");
+            await host.Send("reset");
         }
         finally { await host.Quit(); }
 
@@ -562,8 +608,8 @@ public static class VisionTests
             AppMemory.LastNote = "";
             var run1b = await RunAsync("klik på søgefeltet og skriv hej", null, ("focus_field", "field", "the search box"));
             boxStat = AppMemory.Stat(process, profile, "search_box", "box");
-            Check(lines, run1b?.Outcome == "done" && AppMemory.LastNote.Contains("search_box tries vision first") && boxStat is { Fail: 1 },
-                $"the next time vision is tried first and the box is not tried again [{AppMemory.LastNote}]");
+            Check(lines, run1b?.Outcome == "done" && !AppMemory.LastNote.Contains("tries vision first") && boxStat is { Fail: 2 },
+                $"the next time the box is tried first again and vision stays the last way [{AppMemory.LastNote}; box failed {boxStat?.Fail}×]");
 
             // 2. Click by name: a painted button UI Automation does not show.
             mock.Answer = () => BoxJson(host.Hwnd, rects["archive"], "Archive");
@@ -586,8 +632,16 @@ public static class VisionTests
 
             // 4. open_item: no rows in UI Automation, scroll and tabs find nothing; the model says which row fits.
             mock.Answer = () => BoxJson(host.Hwnd, rects["row:Zalando"], "Zalando Black Friday");
-            var run4 = await RunAsync("find mailen fra Zalando og opsummer den", null, ("open_item", "description", "the mail from Zalando"));
+            // The painted rows have no words UI Automation can read, so Murmur asks before it opens the row the model chose.
+            bool asked4 = false;
+            var run4 = await RunAsync("find mailen fra Zalando og opsummer den", async () =>
+            {
+                asked4 = await Until(async () => { await Task.Yield(); return hf.HasPendingConfirmation; }, 20000);
+                lines.Add($"      asked: [{overlay.CardText}]");
+                await hf.TryHandleAsync("ja", "", "da", host.Hwnd);
+            }, ("open_item", "description", "the mail from Zalando"));
             var st4 = await host.State();
+            Check(lines, asked4, "a row whose words Murmur cannot read is opened only after a yes");
             Check(lines, run4?.Outcome == "done" && st4.GetProperty("opened").GetString() == "Zalando" && TaskRunner.LastHow == "vision" && TaskRunner.LastTried.LastOrDefault() == "vision",
                 $"open_item: the row the model saw is opened [{st4.GetProperty("opened").GetString()}; tried {string.Join(", ", TaskRunner.LastTried)} by {TaskRunner.LastHow}]");
             Check(lines, AppMemory.Stat(process, profile, "open_item", "vision") is { Ok: 1 }, "the memory notes that vision found the row");
@@ -685,7 +739,7 @@ internal static class VisionHost
     {
         public readonly List<Part> Parts = [];
         public string Opened = "", Clicked = "";
-        public WF.TextBox Body = null!, Pin = null!, SearchEditor = null!, NotesEditor = null!;
+        public WF.TextBox Body = null!, Pin = null!, SearchEditor = null!, NotesEditor = null!, Subject = null!;
         public WF.Control? HiddenEditor;
         protected override void OnPaint(WF.PaintEventArgs e)
         {
@@ -782,7 +836,7 @@ internal static class VisionHost
             w.SearchEditor = new WF.TextBox { Visible = false, BorderStyle = WF.BorderStyle.None, Location = new Drawing.Point(332, 18), Size = new Drawing.Size(320, 22), Font = new Drawing.Font("Segoe UI", 14f, Drawing.GraphicsUnit.Pixel) };
             w.NotesEditor = new WF.TextBox { Visible = false, BorderStyle = WF.BorderStyle.None, Location = new Drawing.Point(398, 505), Size = new Drawing.Size(540, 22), Font = new Drawing.Font("Segoe UI", 14f, Drawing.GraphicsUnit.Pixel) };
             if (hiddenEditor) w.HiddenEditor = new CaretBox { Visible = false, Location = new Drawing.Point(332, 18), Size = new Drawing.Size(320, 22) };
-            var subject = new WF.TextBox { AccessibleName = "Subject", Location = new Drawing.Point(236, 560), Size = new Drawing.Size(140, 26), BackColor = Drawing.Color.White };
+            var subject = w.Subject = new WF.TextBox { AccessibleName = "Subject", Location = new Drawing.Point(236, 560), Size = new Drawing.Size(140, 26), BackColor = Drawing.Color.White };
             w.Controls.AddRange([w.Body, w.Pin, subject, w.SearchEditor, w.NotesEditor]);
             if (w.HiddenEditor != null) w.Controls.Add(w.HiddenEditor);
             w.MouseDown += (_, e) =>
@@ -837,6 +891,7 @@ internal static class VisionHost
                             var all = w.Parts.ToDictionary(p => p.Name, p => new[] { origin.X + p.Rect.Left, origin.Y + p.Rect.Top, p.Rect.Width, p.Rect.Height });
                             all["body"] = [origin.X + w.Body.Left, origin.Y + w.Body.Top + 40, w.Body.Width, 40];
                             all["pin"] = [origin.X + w.Pin.Left, origin.Y + w.Pin.Top, w.Pin.Width, w.Pin.Height];
+                            all["subject"] = [origin.X + w.Subject.Left, origin.Y + w.Subject.Top, w.Subject.Width, w.Subject.Height];
                             answer = JsonSerializer.Serialize(all);
                             break;
                         case "reset":
@@ -846,6 +901,8 @@ internal static class VisionHost
                             w.ActiveControl = null;
                             w.Invalidate();
                             break;
+                        // A text box that already has the focus, as a draft or a chat's message box would.
+                        case "draft": w.Subject.Focus(); answer = w.Subject.Focused ? "focused" : "not focused"; break;
                         case "quit": w.Close(); break;
                     }
                 });

@@ -38,7 +38,7 @@ public partial class MainWindow
             SeeScreenModelBox.IsEnabled = p != null && SeeScreenBox.IsChecked == true && (custom || models.Count > 0);
             string name = p?.Name ?? "your AI provider";
             SeeScreenHelp.Text = $"When a task cannot find a button or box any other way, such as new Outlook's search box, a picture of that one app window goes to {name}, which says where it is. Murmur then clicks it. Never an app Murmur is off in, or a window with a password field in focus; password fields are blacked out." +
-                (S.SeeScreenWhenNeeded == null ? " On by default when your provider has a model that reads pictures." : "");
+                (S.SeeScreenWhenNeeded == null ? " Off until you turn it on (it follows “Let the AI model look at the window” until you do)." : "");
             string rec = p == null || custom ? "" : VisionLocator.RecommendedFor(p);
             SeeScreenModelHelp.Text = p == null ? "Needs an AI model (AI polish above)."
                 : choice.Model.Length == 0 ? choice.Why

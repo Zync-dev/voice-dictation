@@ -682,16 +682,22 @@ public static class UiControl
 
     /// <summary>
     /// Scrolls the scrollable part that holds <paramref name="inside"/> (a row of a list), through UI Automation only:
-    /// the mouse does not move and nothing is selected. Null when nothing around it scrolls.
+    /// the mouse does not move and nothing is selected. Not found when nothing around it scrolls; found at 100 % and not
+    /// moved ("fits") when a part that scrolls has nothing left to scroll; null when UI Automation did not answer in time.
     /// </summary>
     /// <remarks><paramref name="settleMs"/>: how long to wait for the new position (an app's profile may say; default ~1 s).</remarks>
     public static Task<ScrollResult?> ScrollAroundAsync(AutomationElement inside, Scroll how, int settleMs = 1000) => Worker.RunAsync(() =>
     {
         var walker = TreeWalker.ControlViewWalker;
-        AutomationElement? target = null;
+        AutomationElement? target = null, fits = null;
         int depth = 0;
         for (var e = walker.GetParent(inside); e != null && depth < 12; e = walker.GetParent(e), depth++)
+        {
             if (Scrolls(e)) { target = e; break; }
+            if (fits == null && HasScroll(e)) fits = e;
+        }
+        // A list that can scroll but has nothing left to scroll (it fits on screen): found, at its end, not moved.
+        if (target == null && fits != null) return new ScrollResult(true, 100, 100, "fits");
         if (target == null) return new ScrollResult(false, 0, 0, "");
         var sp = (ScrollPattern)target.GetCurrentPattern(ScrollPattern.Pattern);
         double before = sp.Current.VerticalScrollPercent;
@@ -711,6 +717,12 @@ public static class UiControl
         }
         return new ScrollResult(true, before, after, "");
     }, Math.Max(BudgetMs, settleMs + 1000));
+
+    private static bool HasScroll(AutomationElement e)
+    {
+        try { return (bool)e.GetCurrentPropertyValue(AutomationElement.IsScrollPatternAvailableProperty); }
+        catch { return false; }
+    }
 
     private static bool Scrolls(AutomationElement e)
     {

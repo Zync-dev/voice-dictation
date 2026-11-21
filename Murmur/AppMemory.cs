@@ -118,6 +118,15 @@ public static class AppMemory
 
     public static bool IsStorable(string step, string method) => StepKinds.Contains(step) && MethodShape.IsMatch(method ?? "");
 
+    /// <summary>The ways that send a picture to the AI model: always tried last, never moved ahead of the ways that match on words.</summary>
+    private static readonly IReadOnlySet<string> LastResort = new HashSet<string> { "vision" };
+
+    /// <summary>
+    /// A plain browser window (no web app profile of its own) is every site at once: what failed or worked on one site says
+    /// nothing about another, so nothing is learned or reordered there.
+    /// </summary>
+    private static bool Learns(string process, AppProfile? profile) => profile != null ? !profile.IsBrowser : !AppProfiles.IsBrowser(process);
+
     /// <summary>
     /// The ways to try, in the order to try them: what worked last first, then the rest in the profile's order, then a
     /// way that keeps failing when it is due to be tried again; one that failed three times in a row and is not due is
@@ -126,7 +135,7 @@ public static class AppMemory
     public static List<string> Order(AppSettings settings, string process, AppProfile? profile, string step, IReadOnlyList<string> methods, out string note)
     {
         note = "";
-        if (!settings.AppMemoryEnabled || methods.Count == 0 || !StepKinds.Contains(step)) return [.. methods];
+        if (!settings.AppMemoryEnabled || methods.Count == 0 || !StepKinds.Contains(step) || !Learns(process, profile)) return [.. methods];
         lock (Gate)
         {
             var app = App(process, profile, create: true)!;
@@ -135,12 +144,15 @@ public static class AppMemory
             var now = Clock();
             MethodStat? S(string m) => stats.Methods.GetValueOrDefault(m);
             bool Due(MethodStat s) => s.LastTried is not { } t || now - t >= RetryAfter || stats.Runs - s.TriedAtRun >= RetryAfterRuns;
-            var worked = methods.Where(m => S(m) is { Ok: > 0, FailStreak: 0 }).OrderByDescending(m => S(m)!.LastOk).ToList();
+            var last = methods.Where(LastResort.Contains).ToList();
+            var ordinary = methods.Where(m => !LastResort.Contains(m)).ToList();
+            var worked = ordinary.Where(m => S(m) is { Ok: > 0, FailStreak: 0 }).OrderByDescending(m => S(m)!.LastOk).ToList();
             var failing = methods.Where(m => S(m) is { FailStreak: >= SkipAfterFails }).ToList();
             var retry = failing.Where(m => Due(S(m)!)).ToList();
             var skipped = failing.Except(retry).ToList();
-            var rest = methods.Except(worked).Except(failing).ToList();
-            var order = worked.Concat(rest).Concat(retry).ToList();
+            var rest = ordinary.Except(worked).Except(failing).ToList();
+            // A picture for the AI model stays the last way, whatever worked before (and is left out while it keeps failing).
+            var order = worked.Concat(rest).Concat(retry.Where(m => !LastResort.Contains(m))).Concat(last.Where(m => !skipped.Contains(m))).ToList();
             var parts = new List<string>();
             if (worked.Count > 0 && worked[0] != methods[0]) parts.Add($"{step} tries {worked[0]} first (worked {S(worked[0])!.Ok}×)");
             if (skipped.Count > 0) parts.Add($"{step} skips {string.Join(", ", skipped)} (failed {SkipAfterFails}× or more in a row)");
@@ -155,7 +167,7 @@ public static class AppMemory
     /// <summary>Notes how one way of doing a step went: worked, failed (it could not do its part), or missed (it did its part, the item was not there).</summary>
     public static void Record(AppSettings settings, string process, AppProfile? profile, string step, string method, Outcome outcome)
     {
-        if (!settings.AppMemoryEnabled || !IsStorable(step, method)) return;
+        if (!settings.AppMemoryEnabled || !IsStorable(step, method) || !Learns(process, profile)) return;
         lock (Gate)
         {
             var app = App(process, profile, create: true)!;
@@ -168,6 +180,8 @@ public static class AppMemory
             {
                 case Outcome.Worked: s.Ok++; s.FailStreak = 0; s.LastOk = now; break;
                 case Outcome.Failed: s.Fail++; s.FailStreak++; break;
+                // It did its part (the search ran, the tabs were there): it works, the item just was not there.
+                case Outcome.Missed: s.FailStreak = 0; break;
             }
             app.LastUsed = now;
             Save();

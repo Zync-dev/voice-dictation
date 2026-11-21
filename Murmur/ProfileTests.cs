@@ -145,6 +145,12 @@ public static class ProfileTests
         ("outlook", "Inbox - lukas@zync.dk - Outlook", "outlook-classic"),
         ("msedge", "Mail - Lukas Nielsen - Outlook - Work - Microsoft​ Edge", "outlook-web"),
         ("chrome", "Mail - Lukas Nielsen - Outlook - Google Chrome", "outlook-web"),
+        // Edge with several tabs: "and 3 more pages" after the page's title.
+        ("msedge", "Mail - Lukas Nielsen - Outlook and 3 more pages - Personal - Microsoft​ Edge", "outlook-web"),
+        ("msedge", "Inbox (3) - a@example.com - Gmail and 2 more pages - Work - Microsoft​ Edge", "gmail"),
+        ("msedge", "general (Channel) - Zync - Slack and 1 more page - Microsoft​ Edge", "slack-web"),
+        ("msedge", "Mail - Lukas Nielsen - Outlook og 4 sider mere - Personlig - Microsoft​ Edge", "outlook-web"),
+        ("msedge", "Outlook and 3 more pages tips - Microsoft​ Edge", "edge"),
         ("msedge", "Outlook (PWA)", "outlook-web"),
         ("chrome", "Inbox (3) - lukas@example.com - Gmail - Google Chrome", "gmail"),
         ("firefox", "Inbox (3) - lukas@example.com - Gmail — Mozilla Firefox", "gmail"),
@@ -284,6 +290,22 @@ public static class ProfileTests
         Check(lines, works[0] == "key:Ctrl+E" && AppMemory.Stat("outlook", classic, "search_box", "key:Ctrl+E")!.FailStreak == 0, $"then it worked: first, and the failures in a row are forgotten [{string.Join(", ", works)}]");
         Rec("search_box", "box", AppMemory.Outcome.Missed, classic, "outlook");
         Check(lines, AppMemory.Stat("outlook", classic, "search_box", "box") is { Ok: 0, Fail: 0, FailStreak: 0, LastTried: not null }, "a way that did its part but did not find the item (missed) counts neither way");
+        // A skipped way that is retried, does its part and misses the item: it works, so it is no longer skipped.
+        for (int i = 0; i < 3; i++) Rec("search_box", "key:F3", AppMemory.Outcome.Failed, classic, "outlook");
+        Rec("search_box", "key:F3", AppMemory.Outcome.Missed, classic, "outlook");
+        Check(lines, AppMemory.Stat("outlook", classic, "search_box", "key:F3") is { Fail: 3, FailStreak: 0 } && Order("search_box", keys, classic, "outlook").Contains("key:F3"),
+            "a failing way that then did its part (missed) is usable again: its failures in a row are forgotten");
+        // A picture for the AI model stays the last way, even after it worked.
+        string[] withVision = ["scroll", "tabs", "vision"];
+        Rec("open_item", "vision", AppMemory.Outcome.Worked);
+        var visionLast = Order("open_item", withVision);
+        Check(lines, visionLast.Last() == "vision" && visionLast[0] == "scroll", $"vision worked, but stays last: the ways that match on words come first [{string.Join(", ", visionLast)}]");
+        // A plain browser window is every site: nothing learned there.
+        var edge = AppProfiles.Get("edge");
+        for (int i = 0; i < 3; i++) Rec("open_item", "scroll", AppMemory.Outcome.Failed, edge, "msedge");
+        Check(lines, AppMemory.Stat("msedge", edge, "open_item", "scroll") == null && Order("open_item", find, edge, "msedge").SequenceEqual(find)
+                     && AppMemory.Stat("msedge", null, "open_item", "scroll") == null,
+            "a plain browser window (any site) learns nothing and keeps the profile's order");
 
         // Saved and read again, as after a restart.
         AppMemory.ReloadFromDisk();

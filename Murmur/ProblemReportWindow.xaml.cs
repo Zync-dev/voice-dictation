@@ -60,6 +60,12 @@ public partial class ProblemReportWindow : Window
         StatusText.Text = "Gathering the report…";
         try { await Task.WhenAny(Report.Ready, Task.Delay(ProblemReports.GatherLimit + TimeSpan.FromSeconds(4))); }
         catch { }
+        // Never shown or saved half-gathered: the report is redacted and checked only when gathering is done.
+        if (!Report.Ready.IsCompleted)
+        {
+            StatusText.Text = "Still gathering the report (the app is slow to answer)…";
+            try { await Report.Ready; } catch { }
+        }
         HoldsList.Children.Clear();
         var r = Report;
         Holds("What went wrong", $"“{r.Headline}”{(r.What.Length > 0 ? " and the reason the card gave." : "")}");
@@ -151,6 +157,7 @@ public partial class ProblemReportWindow : Window
 
     internal string? Save(string? folder = null)
     {
+        if (!Report.Ready.IsCompleted) { StatusText.Text = "The report is still being gathered."; return null; }
         try
         {
             SavedPath = ProblemReports.SaveZip(Report, ShotBox.IsChecked == true ? Screenshot : null, folder);
@@ -167,6 +174,7 @@ public partial class ProblemReportWindow : Window
 
     private void Copy_Click(object sender, RoutedEventArgs e)
     {
+        if (!Report.Ready.IsCompleted) { StatusText.Text = "The report is still being gathered."; return; }
         LastSummary = Report.Summary();
         if (TestMode) { StatusText.Text = "The summary is ready to copy."; return; }
         try

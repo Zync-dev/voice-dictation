@@ -330,6 +330,8 @@ public static class TaskRunner
         public AutomationElement? SearchBox;
         /// <summary>See the screen when needed: where the vision click put the focus, when the app shows that field only as a text caret (VisionLocator).</summary>
         public ScreenBox? VisionBox;
+        /// <summary>The element that had the focus before that vision click: a text box that still has it is never the field that was clicked.</summary>
+        public AutomationElement? VisionBefore;
         public readonly Stopwatch Work = Stopwatch.StartNew();
         public bool OverTime => Work.Elapsed > WorkLimit;
         public CancellationToken Ct => Run.Cancel.Token;
@@ -476,7 +478,9 @@ public static class TaskRunner
         why = why.Trim();
         if (why.Length > 0 && !why.EndsWith('.')) why += ".";
         // Problem reports: gathered in the background; the failed card offers a Report keycap (ProblemReports.cs).
-        if (report && ProblemReports.ForTask(ctx.Hf.Settings, run, i, why, ctx.Target, ctx.Seen ?? ctx.Hf.LastRead) is { } problem) ctx.Hf.Overlay.OfferReport(problem);
+        // A problem starting the report never hides the failure card.
+        try { if (report && ProblemReports.ForTask(ctx.Hf.Settings, run, i, why, ctx.Target, ctx.Seen ?? ctx.Hf.LastRead) is { } problem) ctx.Hf.Overlay.OfferReport(problem); }
+        catch (Exception ex) { Log.Write("Problem report not started: " + ex.Message); }
         ctx.Card($"Step {i + 1} failed. {why}", final: true, failed: true);
     }
 
@@ -602,7 +606,7 @@ public static class TaskRunner
             {
                 var focus = await ScreenReader.FocusAsync(800);
                 if ((focus == null || !ProcessFamily.Of(ScreenReader.PidOf(ctx.Target)).Contains(focus.ProcessId) || !focus.Editable)
-                    && !(ctx.VisionBox is { } seen && focus is not { Password: true } && await VisionLocator.EditableFocusAsync(ctx.Target, seen, 400) != null))
+                    && !(ctx.VisionBox is { } seen && focus is not { Password: true } && await VisionLocator.EditableFocusAsync(ctx.Target, seen, 400, ctx.VisionBefore) != null))
                     return new StepResult(false, $"No text field has focus in {ctx.AppName}.");
                 var (outcome, why) = await hf.PasteForTaskAsync(step.Arg("text"), reply: false);
                 if (outcome != PasteOutcome.Pasted) return new StepResult(false, "Not typed. " + why);
@@ -613,10 +617,12 @@ public static class TaskRunner
                     await Task.Delay(250, ctx.Ct);
                     bool still = await StillInSearchBoxAsync(ctx, box);
                     ctx.VisionBox = null;
+                    ctx.VisionBefore = null;
                     if (still && await hf.PressChordAsync([], 0x0D, "Enter", enterIsSafe: true))
                         return new StepResult(true, "typed and searched");
                 }
                 ctx.VisionBox = null;
+                ctx.VisionBefore = null;
                 return new StepResult(true, "typed");
             }
             case "reply": return await ReplyAsync(ctx, step);
@@ -946,7 +952,8 @@ public static class TaskRunner
     /// Scrolls the list that holds <paramref name="row"/> down a page at a time (through UI Automation: the mouse does
     /// not move and no mail is opened or marked read) and looks again each time. Back to the top when nothing fits.
     /// </summary>
-    private static async Task<(UiControl.Clickable? Pick, int Pages)> LookDownAsync(Context ctx, string description, UiControl.Clickable row)
+    /// <remarks>Pages: how many pages it scrolled; -1 when the list is there but has nothing left to scroll (it fits on screen); 0 when nothing scrolls; null when UI Automation did not answer in time.</remarks>
+    private static async Task<(UiControl.Clickable? Pick, int? Pages)> LookDownAsync(Context ctx, string description, UiControl.Clickable row)
     {
         // A web app (new Outlook) reports the new scroll position late: its profile says how long to wait for it.
         int settle = ctx.Profile?.Items?.ScrollSettleMs ?? 1000;
@@ -960,6 +967,8 @@ public static class TaskRunner
                 Log.Write($"Task: the list did not scroll further (page {page + 1}, found={scrolled?.Found}, {scrolled?.Before:0.#}% → {scrolled?.After:0.#}%)");
                 // A list that is already at its end (it fits on screen) can be scrolled: only one with nothing that scrolls is "cannot".
                 if (page == 0 && scrolled is { Found: true }) pages = -1;
+                // UI Automation did not answer in time: that says nothing about whether scrolling works here.
+                if (page == 0 && scrolled == null) return (null, null);
                 break;
             }
             pages++;
@@ -1122,7 +1131,7 @@ public static class TaskRunner
                         LastTried.Add(method);
                         var (down, pages) = await LookDownAsync(ctx, description, firstRow);
                         pick = down;
-                        outcome = pick != null ? AppMemory.Outcome.Worked : pages == 0 ? AppMemory.Outcome.Failed : AppMemory.Outcome.Missed;
+                        outcome = pick != null ? AppMemory.Outcome.Worked : pages == null ? null : pages == 0 ? AppMemory.Outcome.Failed : AppMemory.Outcome.Missed;
                         break;
                     // New Outlook sorts newsletters and offers into "Other" (Danish "Andet"), Gmail into "Promotions" and
                     // more: look there too, then go back.
@@ -1322,6 +1331,7 @@ public static class TaskRunner
         bool browser = AppProfiles.IsBrowser(process);
         var profile = ctx.Profile;
         ctx.VisionBox = null;
+        ctx.VisionBefore = null;
         // See the screen when needed: the vision model is the last way, for a box UI Automation does not show (new Outlook).
         var ways = AppProfiles.SearchOf(profile).ToList();
         if (VisionLocator.Available(hf.Settings)) ways.Add("vision");
@@ -1658,7 +1668,7 @@ public static class TaskRunner
 
     /// <summary>The search box still has the focus: the UI Automation box, or (after a vision click) something editable at the box the model found.</summary>
     private static async Task<bool> StillInSearchBoxAsync(Context ctx, AutomationElement box) =>
-        ctx.VisionBox is { } seen ? await VisionLocator.EditableFocusAsync(ctx.Target, seen, 400) != null : await SearchFieldFocusedAsync(ctx, box) != null;
+        ctx.VisionBox is { } seen ? await VisionLocator.EditableFocusAsync(ctx.Target, seen, 400, ctx.VisionBefore) != null : await SearchFieldFocusedAsync(ctx, box) != null;
 
     /// <summary>One look by the vision model, with the card saying so and the AI call counted.</summary>
     private static async Task<VisionResult> LookAsync(Context ctx, VisionKind kind, string target)
@@ -1684,14 +1694,18 @@ public static class TaskRunner
         var before = await Worker.RunAsync(() => ContextReader.Focused(), 1500);
         var seen = await LookAsync(ctx, VisionKind.SearchBox, "search box");
         if (seen.Hit is not { } hit) { Log.Write($"Task: the vision model found no search box ({seen.Why})"); return null; }
+        // The search box is clicked with no question: anything that may send, delete or close (by the model's label or by
+        // what Windows says is at the spot) is not clicked at all.
+        if (VisionLocator.ConfirmReason(VisionKind.SearchBox, hit, "search box") is { } risky) { Log.Write("Task: the spot the vision model gave for the search box is not clicked: " + risky); return null; }
         if (!await VisionLocator.ClickAsync(ctx.Hf.Settings, ctx.Target, hit, ctx.Ct)) return null;
         ctx.Hf.KeysSent.Add("vision click search box");
         await Task.Delay(250, ctx.Ct);
         if (await SearchFieldFocusedAsync(ctx, null, before, null) is { } box) { Log.Write("Task: the vision click put the focus in a search box"); return box; }
-        string? how = await VisionLocator.EditableFocusAsync(ctx.Target, hit.Box);
-        if (how == null) { Log.Write("Task: after the vision click nothing editable has the focus; nothing will be typed"); return null; }
+        string? how = await VisionLocator.EditableFocusAsync(ctx.Target, hit.Box, before: before);
+        if (how == null) { Log.Write("Task: after the vision click nothing editable has the focus at the search box; nothing will be typed"); return null; }
         Log.Write($"Task: the vision click put the focus in the search box ({how})");
         ctx.VisionBox = hit.Box;
+        ctx.VisionBefore = before;
         return await Worker.RunAsync(() => AutomationElement.FromHandle(WindowControl.Root(ctx.Target)), 1500);
     }
 
@@ -1722,6 +1736,13 @@ public static class TaskRunner
             string said = seen.Attempt?.Outcome ?? "";
             return (null, said == "not found" || said.StartsWith("rejected") ? AppMemory.Outcome.Missed : AppMemory.Outcome.Failed);
         }
+        // UI Automation names the row at the spot (new Outlook's rows have their whole text): it must fit the description by
+        // its words, or it is not opened. A row it cannot read is opened only after the user says yes (VisionLocator.ConfirmReason).
+        if (hit.UnderName.Length > 0 && hit.UnderKind is "ListItem" or "TreeItem" or "DataItem" && !RowFits(description, hit.UnderName))
+        {
+            Log.Write($"Task: the row the vision model chose does not fit “{Short(description, 60)}” by its words; not opened");
+            return (null, AppMemory.Outcome.Missed);
+        }
         var (clicked, refused) = await VisionClickAsync(ctx, VisionKind.Row, hit, description, "the row");
         if (refused != null) return (refused, AppMemory.Outcome.Missed);
         if (!clicked) return (new StepResult(false, $"The row Murmur saw in {ctx.AppName} could not be clicked."), AppMemory.Outcome.Failed);
@@ -1729,6 +1750,14 @@ public static class TaskRunner
         ctx.Hf.KeysSent.Add("vision click row");
         await Task.Delay(300, ctx.Ct);
         return (new StepResult(true, "opened the row the AI model saw"), AppMemory.Outcome.Worked);
+    }
+
+    /// <summary>Whether a row's text fits the description by its words: the match ItemFinder makes, or every word of the sender the user named.</summary>
+    private static bool RowFits(string description, string text)
+    {
+        var row = new UiControl.Clickable(text, "ListItem", "", null!, 0);
+        var sender = ItemFinder.SenderWords(description);
+        return ItemFinder.Match(description, [row]).Best != null || (sender.Count > 0 && ItemFinder.HasAll(row, sender));
     }
 
     /// <summary>click's last way: no control by that name in UI Automation, so the model looks for it on a picture of the window.</summary>
@@ -1755,6 +1784,7 @@ public static class TaskRunner
     private static async Task<StepResult> FieldByVisionAsync(Context ctx, string spoken)
     {
         string process = ScreenReader.ProcessOf(ctx.Target);
+        var before = await Worker.RunAsync(() => ContextReader.Focused(), 1500);
         var seen = await LookAsync(ctx, VisionKind.Field, spoken);
         if (seen.Hit is not { } hit)
         {
@@ -1763,11 +1793,12 @@ public static class TaskRunner
         }
         var (clicked, refused) = await VisionClickAsync(ctx, VisionKind.Field, hit, spoken, $"the field “{Short(spoken, 40)}”");
         if (refused != null) return refused;
-        string? how = clicked ? await VisionLocator.EditableFocusAsync(ctx.Target, hit.Box) : null;
+        string? how = clicked ? await VisionLocator.EditableFocusAsync(ctx.Target, hit.Box, before: before) : null;
         AppMemory.Record(ctx.Hf.Settings, process, ctx.Profile, "field", "vision", how != null ? AppMemory.Outcome.Worked : AppMemory.Outcome.Failed);
         if (!clicked) return new StepResult(false, $"“{spoken}” in {ctx.AppName} could not be clicked.");
         if (how == null) return new StepResult(false, $"“{spoken}” in {ctx.AppName} did not take the focus.");
         ctx.VisionBox = how == "caret" ? hit.Box : null;
+        ctx.VisionBefore = how == "caret" ? before : null;
         ctx.Hf.KeysSent.Add("vision click field " + spoken);
         return new StepResult(true, $"focused {spoken} (seen by the AI model, {how})");
     }

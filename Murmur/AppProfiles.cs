@@ -222,10 +222,14 @@ public static class AppProfiles
         var m = p.Match;
         if (m.Browser) { if (!IsBrowser(process)) return false; }
         else if (m.Processes == null || !m.Processes.Any(x => x.Equals(process, StringComparison.OrdinalIgnoreCase))) return false;
+        // A browser window with several tabs adds "and 3 more pages" (Edge; Danish "og 3 sider mere") after the page's own title.
+        if (m.Browser) try { title = MorePages.Replace(title, ""); } catch (RegexMatchTimeoutException) { }
         if (p.TitleRegex != null)
             try { if (!p.TitleRegex.IsMatch(title)) return false; } catch (RegexMatchTimeoutException) { return false; }
         return true;
     }
+
+    private static readonly Regex MorePages = new(@"\s+(?:and\s+\d+\s+more\s+pages?|og\s+\d+\s+(?:flere\s+)?sider?(?:\s+(?:mere|til))?)(?=\s*(?:[-–—|]|$))", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
 
     // ---------- what the tasks ask ----------
 
