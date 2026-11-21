@@ -264,6 +264,13 @@ public class AppSettings
 
     // ---- end Hands-free: multi-step tasks ----
 
+    // ---- Problem reports (ProblemReports.cs) ----
+
+    /// <summary>When a hands-free step or task fails, keep a problem report on this PC (no mail text, no keys; the last 10). Nothing is uploaded.</summary>
+    public bool ProblemReportsKeep { get; set; } = true;
+
+    // ---- end Problem reports ----
+
     // ---- persistence ----
 
     /// <summary>The real data folder; speech models always live here so test runs do not download them again.</summary>
@@ -366,12 +373,23 @@ public static class Secret
 public static class Log
 {
     private static readonly object Gate = new();
+    // Problem reports: the latest lines in memory, so a report can take the lines of the run that failed (ProblemReports.cs).
+    private static readonly Queue<(DateTime Time, string Line)> RecentLines = new();
+
+    /// <summary>Log lines written since <paramref name="since"/>, oldest first (at most the last 400 lines are kept in memory).</summary>
+    public static List<(DateTime Time, string Line)> Recent(DateTime since)
+    {
+        lock (Gate) return RecentLines.Where(l => l.Time >= since).ToList();
+    }
+
     public static void Write(string message)
     {
         try
         {
             lock (Gate)
             {
+                RecentLines.Enqueue((DateTime.Now, message.Length > 2000 ? message[..2000] : message));
+                while (RecentLines.Count > 400) RecentLines.Dequeue();
                 Directory.CreateDirectory(AppSettings.DataDir);
                 File.AppendAllText(Path.Combine(AppSettings.DataDir, "murmur.log"),
                     $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}");

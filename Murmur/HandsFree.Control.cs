@@ -22,6 +22,7 @@ public sealed partial class HandsFree
     {
         if (match.Intent is ConfirmIntent or IConfirmationAnswer) return;
         LastCommand = (match, request);
+        NoteCommandStarted(); // Problem reports (HandsFree.Report.cs)
     }
 
     // ---------- numbered choices ----------

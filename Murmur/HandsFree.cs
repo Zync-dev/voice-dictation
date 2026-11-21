@@ -128,6 +128,7 @@ public sealed partial class HandsFree : IIntentHost
     public void Flash(string text, bool error = false)
     {
         LastFlash = text;
+        if (error) OfferCommandReport(text); // Problem reports (HandsFree.Report.cs)
         _overlay.Flash(text, error, seconds: error ? 4 : 3);
     }
 
@@ -166,6 +167,7 @@ public sealed partial class HandsFree : IIntentHost
         }
         catch (Exception ex)
         {
+            OfferPasteReport(ex.Message); // Problem reports (HandsFree.Report.cs)
             ShowAnswer("Not pasted", text, "  " + ex.Message);
             return PasteOutcome.Failed;
         }
@@ -179,6 +181,7 @@ public sealed partial class HandsFree : IIntentHost
 
         PasteOutcome Held(string reason)
         {
+            if (!reason.StartsWith("Keys still held", StringComparison.Ordinal)) OfferPasteReport(reason); // Problem reports (HandsFree.Report.cs)
             ShowAnswer("Not pasted", text, "  " + reason);
             return PasteOutcome.Blocked;
         }
