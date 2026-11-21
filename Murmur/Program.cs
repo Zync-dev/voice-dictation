@@ -8,8 +8,10 @@ namespace Murmur;
 public static class Program
 {
     [STAThread]
-    public static void Main(string[] args)
+    public static int Main(string[] args)
     {
+        // Test runs can ask to run on a hidden desktop, so their windows never pop up on the user's screen.
+        if (HiddenDesktop.RunIfRequested() is int exitCode) return exitCode;
         try
         {
             Velopack.VelopackApp.Build()
@@ -23,6 +25,6 @@ public static class Program
         App.FirstRun = !AppSettings.HasSavedSettings; // read before anything can save
         var app = new App();
         app.InitializeComponent();
-        app.Run();
+        return app.Run();
     }
 }
