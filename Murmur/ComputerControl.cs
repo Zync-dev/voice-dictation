@@ -701,7 +701,14 @@ public static class UiControl
             case Scroll.Up: sp.ScrollVertical(ScrollAmount.LargeDecrement); break;
             default: sp.ScrollVertical(ScrollAmount.LargeIncrement); break;
         }
-        return new ScrollResult(true, before, sp.Current.VerticalScrollPercent, "");
+        // Web apps (new Outlook) report the new position only a moment later: wait for it to change (up to ~1 s).
+        double after = sp.Current.VerticalScrollPercent;
+        for (int i = 0; i < 10 && Math.Abs(after - before) < 0.01; i++)
+        {
+            Thread.Sleep(100);
+            after = sp.Current.VerticalScrollPercent;
+        }
+        return new ScrollResult(true, before, after, "");
     }, BudgetMs);
 
     private static bool Scrolls(AutomationElement e)

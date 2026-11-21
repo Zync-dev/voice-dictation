@@ -919,6 +919,56 @@ public static class TaskRunner
     /// for the list to load); then one AI call by meaning; then (with no AI) the one row from the sender the user named; then
     /// the app's own search box (typing the name and pressing Enter there is safe and can be undone); only then it fails.
     /// </summary>
+    /// <summary>
+    /// Scrolls the list that holds <paramref name="row"/> down a page at a time (through UI Automation: the mouse does
+    /// not move and no mail is opened or marked read) and looks again each time. Back to the top when nothing fits.
+    /// </summary>
+    private static async Task<UiControl.Clickable?> LookDownAsync(Context ctx, string description, UiControl.Clickable row)
+    {
+        for (int page = 0; page < ScrollPages; page++)
+        {
+            ctx.Card($"Looking further down in {ctx.AppName}…");
+            var scrolled = await UiControl.ScrollAroundAsync(row.Element, UiControl.Scroll.Down);
+            if (scrolled is not { Found: true } || scrolled.After <= scrolled.Before + 0.01)
+            {
+                Log.Write($"Task: the list did not scroll further (page {page + 1}, found={scrolled?.Found}, {scrolled?.Before:0.#}% → {scrolled?.After:0.#}%)");
+                break;
+            }
+            await Task.Delay(300, ctx.Ct);
+            var more = await FindItemAsync(ctx, description, TimeSpan.FromSeconds(4));
+            if (more == null) break;
+            if (more.Value.Match.Best is { } best) { LastHow = $"words, {page + 1} page(s) down"; return best; }
+            if (more.Value.Items.FirstOrDefault(ItemFinder.MailLike) is { } next) row = next;
+        }
+        _ = await UiControl.ScrollAroundAsync(row.Element, UiControl.Scroll.Top);
+        return null;
+    }
+
+    /// <summary>New Outlook's "Focused" and "Other" inbox tabs (Danish "Prioriteret" / "Andet"), when there are both.</summary>
+    private static Task<(AutomationElement Focused, AutomationElement Other, string OtherName)?> OtherInboxTabAsync(Context ctx) => Worker.RunAsync<(AutomationElement, AutomationElement, string)?>(() =>
+    {
+        var root = AutomationElement.FromHandle(WindowControl.Root(ctx.Target));
+        var tabs = root.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem));
+        AutomationElement? focused = null, other = null;
+        string otherName = "";
+        foreach (AutomationElement t in tabs)
+        {
+            string name = ItemFinder.Fold(t.Current.Name ?? "");
+            if (name is "focused" or "prioriteret" or "fokuseret") focused = t;
+            else if (name is "other" or "andet" or "andre") { other = t; otherName = t.Current.Name; }
+        }
+        if (focused == null || other == null) return null;
+        // Already in "Other": nothing more to look at.
+        try { if (((SelectionItemPattern)other.GetCurrentPattern(SelectionItemPattern.Pattern)).Current.IsSelected) return null; } catch { }
+        return (focused, other, otherName);
+    }, 4000);
+
+    private static async Task<bool> SelectTabAsync(AutomationElement tab) => await Worker.RunAsync(() =>
+    {
+        try { ((SelectionItemPattern)tab.GetCurrentPattern(SelectionItemPattern.Pattern)).Select(); return true; }
+        catch (Exception ex) { Log.Write("Task: could not switch tab: " + ex.Message); return false; }
+    }, 3000);
+
     /// <summary>How many pages down a mail list is scrolled to find a mail that is not in view (about 6 rows a page in new Outlook).</summary>
     private const int ScrollPages = 8;
 
@@ -954,21 +1004,28 @@ public static class TaskRunner
         // Not among the rows in view: a mail list shows only what fits on screen, so scroll it down a page at a time
         // (through UI Automation: the mouse does not move and no mail is opened or marked read) and look again.
         if (pick == null && items.FirstOrDefault(ItemFinder.MailLike) is { } firstRow)
+            pick = await LookDownAsync(ctx, description, firstRow);
+        // New Outlook sorts newsletters and offers into "Other" (Danish "Andet"): look there too, then go back.
+        if (pick == null && IsMail(ctx) && await OtherInboxTabAsync(ctx) is { } tabs)
         {
-            var row = firstRow;
-            for (int page = 0; page < ScrollPages && pick == null; page++)
+            ctx.Card($"Looking in {tabs.OtherName} in {app}…");
+            if (await SelectTabAsync(tabs.Other))
             {
-                ctx.Card($"Looking further down in {app}…");
-                var scrolled = await UiControl.ScrollAroundAsync(row.Element, UiControl.Scroll.Down);
-                if (scrolled is not { Found: true } || scrolled.After <= scrolled.Before + 0.01) { Log.Write($"Task: the list did not scroll further (page {page + 1})"); break; }
-                await Task.Delay(500, ctx.Ct);
-                var more = await FindItemAsync(ctx, description, TimeSpan.FromSeconds(4));
-                if (more == null) break;
-                if (more.Value.Match.Best is { } best) { pick = best; LastHow = $"words, {page + 1} page(s) down"; }
-                else if (more.Value.Items.FirstOrDefault(ItemFinder.MailLike) is { } next) row = next;
+                await Task.Delay(900, ctx.Ct);
+                var other = await FindItemAsync(ctx, description, TimeSpan.FromSeconds(6));
+                if (other is { } o)
+                {
+                    pick = o.Match.Best;
+                    if (pick != null) LastHow = $"words, in {tabs.OtherName}";
+                    else if (o.Items.FirstOrDefault(ItemFinder.MailLike) is { } otherFirst)
+                    {
+                        pick = await LookDownAsync(ctx, description, otherFirst);
+                        if (pick != null) LastHow += $", in {tabs.OtherName}";
+                    }
+                    if (pick != null) items = o.Items;
+                }
+                if (pick == null) { await SelectTabAsync(tabs.Focused); await Task.Delay(600, ctx.Ct); }
             }
-            // Back to the top when nothing was found, so the list is left as it was.
-            if (pick == null) _ = await UiControl.ScrollAroundAsync(row.Element, UiControl.Scroll.Top);
         }
         if (pick == null && match.Search.Length > 0)
         {
