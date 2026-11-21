@@ -324,6 +324,8 @@ public static class TaskRunner
         public DateTime SeenAt;
         public int Index;
         public string Status = "";
+        /// <summary>The app's search box when focus_field just put the focus there: the next "type" then also presses Enter in it.</summary>
+        public AutomationElement? SearchBox;
         public readonly Stopwatch Work = Stopwatch.StartNew();
         public bool OverTime => Work.Elapsed > WorkLimit;
         public CancellationToken Ct => Run.Cancel.Token;
@@ -593,7 +595,16 @@ public static class TaskRunner
                 if (focus == null || !ProcessFamily.Of(ScreenReader.PidOf(ctx.Target)).Contains(focus.ProcessId) || !focus.Editable)
                     return new StepResult(false, $"No text field has focus in {ctx.AppName}.");
                 var (outcome, why) = await hf.PasteForTaskAsync(step.Arg("text"), reply: false);
-                return outcome == PasteOutcome.Pasted ? new StepResult(true, "typed") : new StepResult(false, "Not typed. " + why);
+                if (outcome != PasteOutcome.Pasted) return new StepResult(false, "Not typed. " + why);
+                // Typed into the app's search box: Enter runs the search (only while that box still has the focus).
+                if (ctx.SearchBox is { } box)
+                {
+                    ctx.SearchBox = null;
+                    await Task.Delay(250, ctx.Ct);
+                    if (await SearchFieldFocusedAsync(ctx, box) != null && await hf.PressChordAsync([], 0x0D, "Enter", enterIsSafe: true))
+                        return new StepResult(true, "typed and searched");
+                }
+                return new StepResult(true, "typed");
             }
             case "reply": return await ReplyAsync(ctx, step);
             case "send": return await SendAsync(ctx);
@@ -1366,6 +1377,14 @@ public static class TaskRunner
     private static async Task<StepResult> FocusFieldAsync(Context ctx, string spoken)
     {
         string want = FieldName(spoken);
+        // The app's search box: new Outlook shows it only once its search key is pressed or its Search button clicked,
+        // so look for it the way open_item's search does (by name, the app's search keys, then the Search control).
+        if (Regex.IsMatch(ItemFinder.Fold(spoken), @"^(?:the |den |det )?(?:search|sog|soeg|soegning|sogning|sogefelt|search box|search bar|soegefelt)\b", RegexOptions.CultureInvariant)
+            && await FocusSearchBoxAsync(ctx) is { } searchBox)
+        {
+            ctx.SearchBox = searchBox;
+            return new StepResult(true, "focused the search box");
+        }
         List<FieldHit>? fields = null;
         // One cached search on the app's side (fast in a big web app); asked again with more time when the app is busy.
         foreach (int budget in new[] { 2500, 5000 })
@@ -1395,7 +1414,9 @@ public static class TaskRunner
         }
         if (fields == null) return new StepResult(false, $"{ctx.AppName} did not answer in time.");
         var scored = fields.Select(f => (f, s: UiControl.Score(want, f.Name))).Where(x => x.s >= 0.6).OrderByDescending(x => x.s).ToList();
-        var hit = scored.Count > 0 ? scored[0].f : fields.Count == 1 ? fields[0] : null;
+        // The only field when its name does not fit: only a real text box, never the page or document itself.
+        var only = fields.Count == 1 && await Worker.RunAsync(() => fields[0].Element.Current.ControlType == ControlType.Edit, 1000) ? fields[0] : null;
+        var hit = scored.Count > 0 ? scored[0].f : only;
         if (hit == null) return new StepResult(false, $"No text field called “{spoken}” in {ctx.AppName}.");
         // Focus only inside the window the task is about, and never a password field.
         bool focused = await Worker.RunAsync(() => { hit.Element.SetFocus(); return true; }, 1500);

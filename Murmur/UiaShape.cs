@@ -127,6 +127,11 @@ public static class UiaShape
                         if (parts > 1) tree.Append(',').Append(parts).Append(" parts");
                         if (hasTime) tree.Append(",time");
                         if (hasDate) tree.Append(",date");
+                        // MURMUR_SHAPE_NAMES=1: the labels of the app's own controls (buttons, fields, tabs, menus), never
+                        // list rows, texts or documents, nothing with a time or date and nothing longer than 40 characters.
+                        if (Environment.GetEnvironmentVariable("MURMUR_SHAPE_NAMES") == "1" && !hasTime && !hasDate && name.Length <= 40
+                            && type is "Button" or "SplitButton" or "Edit" or "ComboBox" or "TabItem" or "MenuItem" or "ToolBar" or "Tab" or "Hyperlink")
+                            tree.Append(" \"").Append(name.Replace('"', '\'')).Append('"');
                     }
                     tree.Append(" kids=").Append(count);
                     string patterns = (Has(e, AutomationElement.IsInvokePatternAvailableProperty) ? "I" : "")
