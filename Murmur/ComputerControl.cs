@@ -171,7 +171,7 @@ public static class AppCatalog
     private static readonly Dictionary<string, string> Descriptions = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>A window's app name: the exe's own description ("Microsoft Word", "Google Chrome"), else the process name.</summary>
-    private static string Describe(string process, IntPtr hwnd)
+    internal static string Describe(string process, IntPtr hwnd)
     {
         // A Store app's window belongs to ApplicationFrameHost; its title is the app's name ("Lommeregner").
         if (process.Equals("ApplicationFrameHost", StringComparison.OrdinalIgnoreCase)) return ScreenReader.WindowTitle(hwnd);
@@ -415,7 +415,13 @@ public static class UiControl
 
     /// <summary>Something that can be clicked: its name, kind, a few words of where it is ("in Report"), and the element.</summary>
     /// <summary><paramref name="InDocument"/>: inside a document or web page (content, not the app's own controls). <paramref name="InDialog"/>: inside a dialog.</summary>
-    public sealed record Clickable(string Name, string Kind, string Where, AutomationElement Element, int Order, bool InDocument = false, bool InDialog = false);
+    /// <summary><paramref name="Detail"/>: for a list, tree or table item, its name and the names of the parts inside it
+    /// (sender, subject, time, preview in a mail list), so an item whose text is split over child elements can still be found.</summary>
+    public sealed record Clickable(string Name, string Kind, string Where, AutomationElement Element, int Order, bool InDocument = false, bool InDialog = false, string Detail = "")
+    {
+        /// <summary>Everything the item says: its name and its parts.</summary>
+        public string Text => Detail.Length > 0 ? Detail : Name;
+    }
 
     private static readonly HashSet<ControlType> ClickTypes =
     [
@@ -423,36 +429,132 @@ public static class UiControl
         ControlType.ListItem, ControlType.TreeItem, ControlType.CheckBox, ControlType.RadioButton, ControlType.DataItem,
     ];
 
+    /// <summary>Items of a list, tree or table: their parts are collected into <see cref="Clickable.Detail"/>.</summary>
+    private static readonly HashSet<ControlType> ItemTypes = [ControlType.ListItem, ControlType.TreeItem, ControlType.DataItem];
+    private static readonly HashSet<ControlType> Containers = [ControlType.List, ControlType.Tree, ControlType.DataGrid, ControlType.Table];
+    /// <summary>When only items are wanted (a mail list), these hold none and are not walked into: it saves time in a big window.</summary>
+    /// <summary>Not part of an item's text: a row's own buttons (Flag, Delete, Pin) say what they do, not what the item is.</summary>
+    private static readonly HashSet<ControlType> PartsNot = [ControlType.Button, ControlType.SplitButton, ControlType.CheckBox, ControlType.Image, ControlType.MenuItem];
+    private static readonly HashSet<ControlType> NoItemsInside = [ControlType.MenuBar, ControlType.Menu, ControlType.ToolBar, ControlType.TitleBar, ControlType.ScrollBar, ControlType.StatusBar];
+
+    /// <summary>What a walk of the window found: the clickables and how much there was (to tell when a window has finished loading).</summary>
+    public sealed record Scan(List<Clickable> Found, int Nodes, int DocumentNodes, bool HasDocument, bool CutOff, double Ms)
+    {
+        public int Items => Found.Count(c => c.Kind is "ListItem" or "DataItem" or "TreeItem");
+    }
+
     /// <summary>Every enabled, on-screen, named thing with a click-like pattern in the window (password fields never).</summary>
-    public static Task<List<Clickable>?> ClickablesAsync(IntPtr hwnd) => Worker.RunAsync(() =>
+    public static async Task<List<Clickable>?> ClickablesAsync(IntPtr hwnd) => (await ScanAsync(hwnd))?.Found;
+
+    /// <summary>
+    /// The walk behind <see cref="ClickablesAsync"/>, with its own budget. Each element's properties and its children come
+    /// in one cached call (UI Automation's cache), not one call per property: in a big web app (new Outlook, Gmail, Slack)
+    /// that is ten times faster. <paramref name="itemsOnly"/> skips menus and toolbars. Null when the app did not answer
+    /// within the budget (a hung or just-started app: try again).
+    /// </summary>
+    /// <remarks>List rows with no click pattern (which open with the focus and Enter) are found only with <paramref name="itemsOnly"/>:
+    /// a plain click could not click them.</remarks>
+    public static Task<Scan?> ScanAsync(IntPtr hwnd, int budgetMs = BudgetMs, int maxNodes = MaxNodes, bool itemsOnly = false) => Worker.RunAsync(() =>
     {
         var watch = Stopwatch.StartNew();
         var found = new List<Clickable>();
-        var root = AutomationElement.FromHandle(WindowControl.Root(hwnd));
-        var walker = TreeWalker.ControlViewWalker;
-        var stack = new Stack<(AutomationElement E, string Group, bool Doc, bool Dialog)>();
-        stack.Push((root, "", false, false));
-        int nodes = 0;
-        while (stack.Count > 0 && nodes < MaxNodes && watch.ElapsedMilliseconds < BudgetMs)
+        var parts = new Dictionary<int, List<string>>();
+        var cache = new CacheRequest { TreeScope = TreeScope.Element | TreeScope.Children, TreeFilter = Automation.ControlViewCondition, AutomationElementMode = AutomationElementMode.Full };
+        foreach (var p in new AutomationProperty[]
+                 {
+                     AutomationElement.NameProperty, AutomationElement.ControlTypeProperty, AutomationElement.IsEnabledProperty, AutomationElement.IsOffscreenProperty,
+                     AutomationElement.IsPasswordProperty, AutomationElement.ClassNameProperty, AutomationElement.LocalizedControlTypeProperty,
+                     AutomationElement.IsKeyboardFocusableProperty, AutomationElement.IsInvokePatternAvailableProperty, AutomationElement.IsTogglePatternAvailableProperty,
+                     AutomationElement.IsSelectionItemPatternAvailableProperty, AutomationElement.IsExpandCollapsePatternAvailableProperty,
+                 })
+            cache.Add(p);
+        int nodes = 0, docNodes = 0;
+        bool hasDoc = false, cut = false;
+        using (cache.Activate())
         {
-            var (e, group, doc, dialog) = stack.Pop();
-            nodes++;
-            AutomationElement.AutomationElementInformation info;
-            try { info = e.Current; } catch { continue; }
-            if (info.IsPassword) continue;
-            string name = (info.Name ?? "").Trim();
-            if (ClickTypes.Contains(info.ControlType) && name.Length > 0 && info.IsEnabled && !info.IsOffscreen && HasClickPattern(e))
-                found.Add(new Clickable(name, info.ControlType.ProgrammaticName.Replace("ControlType.", ""), group, e, found.Count, doc, dialog));
-            bool innerDoc = doc || info.ControlType == ControlType.Document;
-            bool innerDialog = dialog || info.ControlType == ControlType.Window && IsDialog(e, info);
-            string inner = info.ControlType == ControlType.Group || info.ControlType == ControlType.Pane && name.Length > 0 || info.ControlType == ControlType.Tab
-                ? (name.Length > 0 ? name : group) : group;
-            var children = new List<AutomationElement>();
-            try { for (var c = walker.GetFirstChild(e); c != null && children.Count < 400; c = walker.GetNextSibling(c)) children.Add(c); } catch { }
-            for (int i = children.Count - 1; i >= 0; i--) stack.Push((children[i], inner, innerDoc, innerDialog));
+            var root = AutomationElement.FromHandle(WindowControl.Root(hwnd)).GetUpdatedCache(cache);
+            // (element, group name, in a document, in a dialog, the item it is part of (-1: none), depth inside that item, inside a list)
+            var stack = new Stack<(AutomationElement E, string Group, bool Doc, bool Dialog, int Item, int ItemDepth, bool InList)>();
+            stack.Push((root, "", false, false, -1, 0, false));
+            while (stack.Count > 0)
+            {
+                if (nodes >= maxNodes || watch.ElapsedMilliseconds >= budgetMs) { cut = true; break; }
+                var (e, group, doc, dialog, item, itemDepth, inList) = stack.Pop();
+                nodes++;
+                if (doc) docNodes++;
+                AutomationElement.AutomationElementInformation info;
+                ControlType type;
+                try { info = e.Cached; type = info.ControlType; } catch { continue; }
+                if (info.IsPassword) continue;
+                string name = (info.Name ?? "").Trim();
+                bool isItem = ItemTypes.Contains(type);
+                int innerItem = item, innerDepth = itemDepth + 1;
+                if (item >= 0 && !isItem && name.Length > 0 && itemDepth <= 4 && !PartsNot.Contains(type))
+                {
+                    // A part of an item (sender, subject, time, preview): kept with the item's text.
+                    var list = parts[item];
+                    if (list.Count < 12 && !list.Contains(name)) list.Add(name.Length > 160 ? name[..160] : name);
+                }
+                if (ClickTypes.Contains(type) && info.IsEnabled && !info.IsOffscreen)
+                {
+                    bool clickPattern = Cached(e, AutomationElement.IsInvokePatternAvailableProperty) || Cached(e, AutomationElement.IsTogglePatternAvailableProperty)
+                        || Cached(e, AutomationElement.IsSelectionItemPatternAvailableProperty) || Cached(e, AutomationElement.IsExpandCollapsePatternAvailableProperty);
+                    // A list row without a pattern still opens with the keyboard when it takes the focus (some web mail lists):
+                    // only for an open step (itemsOnly), which has the focus-and-Enter fallback.
+                    bool openable = clickPattern || itemsOnly && isItem && inList && info.IsKeyboardFocusable;
+                    if (openable && (name.Length > 0 || isItem))
+                    {
+                        if (isItem)
+                        {
+                            // A new item: what is inside it are its parts (a nested item, a sub-folder, has its own).
+                            parts[found.Count] = [];
+                            innerItem = found.Count;
+                            innerDepth = 0;
+                        }
+                        found.Add(new Clickable(name, type.ProgrammaticName.Replace("ControlType.", ""), group, e, found.Count, doc, dialog));
+                    }
+                }
+                bool innerDoc = doc || type == ControlType.Document;
+                if (type == ControlType.Document) hasDoc = true;
+                bool innerDialog = dialog || type == ControlType.Window && IsDialog(e, info);
+                bool innerList = inList || Containers.Contains(type);
+                string inner = type == ControlType.Group || type == ControlType.Pane && name.Length > 0 || type == ControlType.Tab
+                    ? (name.Length > 0 ? name : group) : group;
+                if (itemsOnly && NoItemsInside.Contains(type)) continue;
+                AutomationElementCollection? children = null;
+                try
+                {
+                    // The root came with its children; every other element is asked once for its children (and their properties).
+                    children = ReferenceEquals(e, root) ? e.CachedChildren : e.GetUpdatedCache(cache).CachedChildren;
+                }
+                catch { }
+                if (children == null) continue;
+                int count = Math.Min(children.Count, 400);
+                for (int i = count - 1; i >= 0; i--) stack.Push((children[i], inner, innerDoc, innerDialog, innerItem, innerDepth, innerList));
+            }
         }
-        return found;
-    }, BudgetMs + 500);
+        // An item's text: its name and its parts ("Unread, Daniel Hansen, Re: Tilbud, 10:32, Hej Lukas …"). An item with no
+        // name of its own is named by its parts.
+        for (int i = 0; i < found.Count; i++)
+        {
+            if (!parts.TryGetValue(i, out var list)) continue;
+            var c = found[i];
+            var own = c.Name.Length > 0 ? new List<string> { c.Name } : [];
+            var extra = list.Where(p => !own.Any(o => o.Contains(p, StringComparison.OrdinalIgnoreCase))).ToList();
+            string detail = string.Join(", ", own.Concat(extra));
+            if (detail.Length > 400) detail = detail[..400];
+            found[i] = c with { Name = c.Name.Length > 0 ? c.Name : (detail.Length > 200 ? detail[..200] : detail), Detail = extra.Count > 0 ? detail : "" };
+        }
+        found.RemoveAll(c => c.Name.Length == 0);
+        for (int i = 0; i < found.Count; i++) if (found[i].Order != i) found[i] = found[i] with { Order = i };
+        return new Scan(found, nodes, docNodes, hasDoc, cut, watch.Elapsed.TotalMilliseconds);
+    }, budgetMs + 500);
+
+    private static bool Cached(AutomationElement e, AutomationProperty property)
+    {
+        try { return e.GetCachedPropertyValue(property, true) is true; }
+        catch { return false; }
+    }
 
     /// <summary>A Windows dialog ("#32770") or a modal window: its Yes / OK answers "Are you sure?".</summary>
     private static bool IsDialog(AutomationElement e, AutomationElement.AutomationElementInformation info)
@@ -475,17 +577,6 @@ public static class UiControl
         return false;
     }
 
-    private static bool HasClickPattern(AutomationElement e)
-    {
-        try
-        {
-            return (bool)e.GetCurrentPropertyValue(AutomationElement.IsInvokePatternAvailableProperty)
-                || (bool)e.GetCurrentPropertyValue(AutomationElement.IsTogglePatternAvailableProperty)
-                || (bool)e.GetCurrentPropertyValue(AutomationElement.IsSelectionItemPatternAvailableProperty)
-                || (bool)e.GetCurrentPropertyValue(AutomationElement.IsExpandCollapsePatternAvailableProperty);
-        }
-        catch { return false; }
-    }
 
     /// <summary>The spoken target without "knappen", "the button", "linket", "på".</summary>
     internal static string TargetName(string spoken)
@@ -525,13 +616,17 @@ public static class UiControl
     /// Clicks an element the way UI Automation does (Invoke, else Toggle, Select or Expand), without moving the mouse.
     /// On a thread of its own with a short wait: an Invoke that opens a modal dialog can block until the dialog closes.
     /// </summary>
-    public static async Task<bool> ClickAsync(AutomationElement e)
+    /// <remarks><paramref name="selectFirst"/>: a row of a mail list is selected before it is invoked: in classic Outlook a
+    /// row's Invoke opens the mail in a window of its own, while Select shows it in the reading pane (and in a Chromium
+    /// app, new Outlook or the web, Select does what a click does).</remarks>
+    public static async Task<bool> ClickAsync(AutomationElement e, bool selectFirst = false)
     {
         var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
             try
             {
+                if (selectFirst && e.TryGetCurrentPattern(SelectionItemPattern.Pattern, out var first)) { ((SelectionItemPattern)first).Select(); done.TrySetResult(true); return; }
                 if (e.TryGetCurrentPattern(InvokePattern.Pattern, out var ip)) { ((InvokePattern)ip).Invoke(); done.TrySetResult(true); return; }
                 if (e.TryGetCurrentPattern(TogglePattern.Pattern, out var tp)) { ((TogglePattern)tp).Toggle(); done.TrySetResult(true); return; }
                 if (e.TryGetCurrentPattern(SelectionItemPattern.Pattern, out var sp)) { ((SelectionItemPattern)sp).Select(); done.TrySetResult(true); return; }
