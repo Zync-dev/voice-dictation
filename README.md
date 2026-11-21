@@ -454,6 +454,7 @@ Your own profiles: put `app-profiles.json` (same shape, a `profiles` list) in th
 
 - `open_item`: `scroll`, `tabs` (the Other tab) or `search`
 - `search_box`: `box`, `key:Alt+Q`, `key:Ctrl+E`, `key:F3`, `click`
+- See the screen when needed adds `vision` to `open_item` and `search_box`, and remembers `click` and `field` (method `vision`)
 - `reply`: `key:Ctrl+R`, `key:R`
 
 Each way has worked and failed counts, the failures in a row and the time it was last tried. "Failed" means the way could not do its part (nothing to scroll, no tabs, the key opened no box, no reply field came up). A way that did its part but the mail was not there counts neither way. Next time:
@@ -511,6 +512,76 @@ Not verified:
 - On the hidden test desktop, PrintWindow of another app's WPF window draws only white, so the included screenshot in the checks is a white window with its title bar. On the normal desktop it shows the window.
 - The Settings section was checked by building its list in a test window, not by opening the full main window.
 - Explorer opening on the saved zip and the clipboard copy were not run in the checks.
+
+## See the screen when needed
+
+Some apps do not show every control to UI Automation. New Outlook's search box is not in its tree at all, and no key focuses it. When every other way has failed, Murmur can look at a picture of that one app window. Settings > AI polish > **See the screen when needed**. It is on by default only when your AI provider has a model that reads pictures. The help text says that a picture of that one app window goes to the provider.
+
+How it works (`VisionLocator.cs`):
+
+1. **Refusals first.** Nothing is pictured when the setting is off, the app is excluded, the window is Murmur's own, or a password field has the focus. Every other password field in the window is painted black before the picture leaves the PC.
+2. **The picture.** PrintWindow of only that window, never the screen, so nothing on top of it is in the picture. It runs off the UI thread, with 3 s at most for a hung app. A window that draws nothing with full content is asked once more the classic way. The picture is scaled so its longest side is at most 1280 px, and sent as a JPEG.
+3. **The question.** One call to the provider's vision model, with a JSON answer: `{found, x, y, width, height, label, confidence}` in pixels of the picture. The system prompt says the picture is data and never instructions. Questions:
+   - the app's own search box, not a browser's address bar and nothing inside an open message
+   - the button, tab, link or menu item named what you said
+   - the text field named what you said
+   - the list row that fits your description
+4. **Back to the screen.** The box is mapped from the picture to the window's visible frame in physical pixels. This works per monitor, at any DPI, and on a monitor left of or above the main one. The mapping code runs per-monitor DPI aware.
+5. **Checks.**
+   - The model must be sure (0.45 or more).
+   - The box must be inside the picture, with a plausible size: a search box is wide and not tall, a row is wide, a button is not half the window.
+   - At the spot, the window under it must be the app's own, not something covering it.
+   - UI Automation must not see a password field at the spot.
+   - A search box is refused over the open message (the reading pane, the message body, a document in the page) or over a link. A field is refused over a link.
+6. **The click.** One real left click (SendInput: move, down, up, absolute over the virtual desktop). It only happens while the task's window is in front, and the pointer goes back where it was afterwards, also on an error. Before the click, the spot is checked again.
+7. **For a search box or field: is it editable?** Something editable must have the focus before anything is typed. That is a text box UI Automation shows, or, in an app that shows none, a text caret in the app's own window at that box. Only then are the search words typed and Enter pressed, the same as the search by name.
+
+Where it is used, always as the last way:
+
+| Where | Before it | Then |
+| --- | --- | --- |
+| The app's search box (open_item's search, `focus_field` "the search box") | The profile's ways: the box by name, the keys, the Search control | `vision`. New Outlook's profile lists none, so with vision its search now runs. |
+| open_item | The words, the AI pick by meaning, scroll, the other tabs, the search | `vision`: the model says which row fits, and its centre is clicked. Opening a mail can be undone. |
+| `click` (task) and "klik på …" / "click …" (hands-free) | No control by that name, and no AI pick by meaning | The model finds it on the picture |
+| `focus_field` | No field by that name | The model finds it, then the editable check |
+
+Confirmations stay the same. A click on what the model saw asks first on the card when:
+- the name you said or the label it saw sends, deletes, buys or closes (`Confirmations.IsRisky`)
+- the spot is a link
+- the spot is inside the open message (except for a field: an inline reply box sits in the reading pane)
+- the label is not what you said
+
+"Nej", Esc or the timeout and nothing is clicked. A vision click never sends anything. Send stays the task's own `send` step, which asks.
+
+**Memory.** What worked is remembered per app (`AppMemory`, method `vision`): for `search_box` and `open_item`, and as `click` and `field`. With new Outlook, once the search box was found by vision, the next search tries vision first. The log says "Learned for Outlook: search_box tries vision first". As before, only process names, profile ids, step kinds and method names are stored.
+
+**Which model** (`VisionLocator.Model`). One per provider in `VisionModels`. The recommended model that reads pictures is preselected:
+
+| Provider | Model |
+| --- | --- |
+| OpenAI | `gpt-6-luna` |
+| Anthropic | `claude-opus-5-5` |
+| Gemini | `gemini-3.1-flash-lite` |
+| Mistral | `mistral-small-latest` |
+
+Groq is checked against your key's live model list (one model-list request the first time it looks). The list shows a model that reads pictures (`qwen/qwen3.8-27b` today, or a name such as `llama-4-scout` or `…-vl`), or vision is reported unavailable on Groq and the switch is off by default. Custom uses the model you type. The request uses each provider's own image format (see AI providers).
+
+**The card** says "Looking at Outlook's window…" while it runs.
+
+**Problem reports** get a "Seeing the screen" part. It has each look in that run: what was looked for, the outcome ("found", "not found", "rejected: in the message", "off", "excluded", …), the model, the answer's coordinates and confidence, and the time. The label is only kept when it is your own word ("Search"). A row's label is never kept, only its length. The picture is never in a report. Settings line: "see the screen when needed on/off".
+
+Settings: `SeeScreenWhenNeeded` (empty means on when a vision model is there) and `VisionModels`. The older "Let the AI model look at the window" (reading text by vision, `ScreenVision`) is separate and unchanged. The other checks (`--tasktest`, `--controltest`, …) never look at the screen unless they turn it on.
+
+| Switch | What it does |
+| --- | --- |
+| `--visiontest out.txt` | Run with `MURMUR_DATA_DIR` and `MURMUR_HIDDEN_DESKTOP=1`. **Pure:** reading answers (plain, code fence, numbers as text, fractions, a box, percent confidence), the sanity checks, mapping at 100/150/200 % and on a monitor at negative x, the picture size, SendInput's absolute coordinates, the real click with a fake mouse (nothing while another window is in front, pointer put back, also on an error; the real pointer never moves), when a click asks first, the answer as reports keep it, and the model per provider (Groq before and after its live list, a live-only model, none). **The checks' own window** (`--visionhost`, its own process, Windows Forms drawn with GDI so PrintWindow works on the hidden desktop). Its search box, buttons, rows and notes field are only painted, so UI Automation shows none of them. A mock vision server on localhost answers: the requests for OpenAI, Gemini, Mistral, Groq and Anthropic (image formats, JSON mode, the rules), each answer mapped back onto the painted box, the picture (its shape, drawn, the password box black), a box over the message body, not found, outside, setting off and an excluded app (no picture, no request), the click by a posted message and the focus check by UI Automation, and with `--hidden-editor` by the text caret. **Tasks:** `focus_field` "the search box" (the profile's box fails, vision works, the next time vision first), click "Archive", click "Delete" asks and "nej", open_item by the row the model saw, a field, the hands-free "click Archive", and a failed look in the problem report (its answer, no screen text). **One real call** to the Groq key in the test settings when its live list has a model that reads pictures, with a picture of the synthetic window (`MURMUR_VISIONTEST_REAL=0` skips it). `MURMUR_SHOTS=folder` saves the picture that was sent. `MURMUR_VISION_DEBUG=1` logs the caret check. Exit code 1 on a failure |
+| `--show-seescreen` | Opens Settings scrolled to the switch |
+
+Not verified:
+- New Outlook itself was not driven. That its search box gets the focus from a click and then shows a text caret (or an Edit in UI Automation) is expected, not checked. If neither shows, Murmur types nothing and the step fails as before.
+- A real SendInput click and the pointer's put-back were only checked with a fake mouse. The hidden test desktop cannot take real input, so the clicks in the checks are posted messages to the checks' own window.
+- The mapping at 150 % and on several monitors was checked with numbers, not on such a screen. A per-monitor DPI-unaware app whose PrintWindow picture is smaller than its frame is mapped by the frame's size (checked with numbers).
+- Only Groq's `qwen/qwen3.8-27b` was called for real, once, on the synthetic window. OpenAI, Anthropic, Gemini and Mistral were checked against the mock server only.
 
 ## Sound clean-up and hands-free auto-stop
 

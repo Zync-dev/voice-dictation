@@ -885,6 +885,26 @@
                             </StackPanel>
                             <CheckBox x:Name="AiCleanupBox" Grid.Column="1" HorizontalAlignment="Right" Click="Setting_Changed" AutomationProperties.Name="Polish dictations with AI"/>
                         </Grid>
+                        <!-- ==== See the screen when needed (VisionLocator.cs, MainWindow.Vision.cs) ==== -->
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock x:Name="SeeScreenHeading" Style="{StaticResource Label}" Text="See the screen when needed"/>
+                                <TextBlock x:Name="SeeScreenHelp" Style="{StaticResource RowHelp}" Text="When a task cannot find a button or box any other way, such as new Outlook's search box, a picture of that one app window goes to your AI provider, which says where it is. Never an app Murmur is off in, or a window with a password field in focus."/>
+                            </StackPanel>
+                            <CheckBox x:Name="SeeScreenBox" Grid.Column="1" HorizontalAlignment="Right" Click="SeeScreen_Changed" AutomationProperties.Name="See the screen when needed"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Model that looks"/>
+                                <TextBlock x:Name="SeeScreenModelHelp" Style="{StaticResource RowHelp}" Text="A model of your provider that reads pictures."/>
+                            </StackPanel>
+                            <ComboBox x:Name="SeeScreenModelBox" Grid.Column="1" VerticalAlignment="Center" IsEditable="False" SelectionChanged="SeeScreen_Changed" AutomationProperties.Name="Model that looks at the screen"/>
+                        </Grid>
+                        <!-- ==== end See the screen when needed ==== -->
                     </StackPanel>
                 </Border>
 

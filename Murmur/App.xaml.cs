@@ -58,6 +58,8 @@ public partial class App : Application
         if (HandleSetupSwitches(e.Args)) return; // installer, updates and first run: developer switches (App.Setup.cs)
 
         AppMemory.ForTestRun(e.Args); // App profiles and memory: checks that drive tasks start with a fresh memory (AppMemory.cs)
+        VisionLocator.ForTestRun(e.Args); // See the screen when needed: the other checks never call the vision model (VisionLocator.cs)
+        if (VisionTests.TryRun(this, e.Args)) return; // See the screen when needed: --visiontest, --visionhost (VisionTests.cs)
         if (ProfileTests.TryRun(this, e.Args)) return; // App profiles and memory: --profiletest (ProfileTests.cs)
         if (LearningTests.TryRun(this, e.Args)) return; // Learning and context: developer checks
         if (HandsFreeTests.TryRun(this, e.Args)) return; // Hands-free: --routertest, --screentest (HandsFreeTests.cs)

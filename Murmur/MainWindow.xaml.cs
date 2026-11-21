@@ -115,6 +115,7 @@ public partial class MainWindow : Window
         LoadTaskSettings(); // Hands-free: multi-step tasks (MainWindow.Tasks.cs)
         LoadAppMemorySettings(); // App profiles and memory of what worked (MainWindow.AppMemory.cs)
         LoadReportSettings(); // Problem reports (MainWindow.Reports.cs)
+        LoadSeeScreenSettings(); // See the screen when needed (MainWindow.Vision.cs)
         LoadDeveloperSettings(); // ---- Developer mode (MainWindow.DevMode.cs) ----
 
         _loading = false;

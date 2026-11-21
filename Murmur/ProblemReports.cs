@@ -62,6 +62,8 @@ public sealed class ProblemReport
     public string Features { get; set; } = "";
     /// <summary>What the checks took out or left out ("3 quoted parts taken out of the log").</summary>
     public List<string> Notes { get; set; } = [];
+    /// <summary>See the screen when needed: whether the vision model was asked, and its answer (coordinates, confidence; never a picture or screen text).</summary>
+    public List<string> Vision { get; set; } = [];
 
     /// <summary>The app's window, for "Include a screenshot" (this session only, never saved).</summary>
     [JsonIgnore] public IntPtr Window { get; set; }
@@ -96,6 +98,10 @@ public sealed class ProblemReport
         b.AppendLine($"Murmur {MurmurVersion}; {Windows}");
         b.AppendLine($"AI: {Ai}; speech: {Speech}");
         if (Features.Length > 0) b.AppendLine(Features);
+        b.AppendLine();
+        b.AppendLine("== Seeing the screen (vision model) ==");
+        if (Vision.Count == 0) b.AppendLine("Not tried.");
+        foreach (var v in Vision) b.AppendLine(v);
         b.AppendLine();
         b.AppendLine($"== Murmur's log for this run ({LogLines.Count} lines) ==");
         foreach (var l in LogLines) b.AppendLine(l);
@@ -236,7 +242,10 @@ public static class ProblemReports
         r.Ai = ai == null ? "none" : $"{ai.Name}, {AiConfig.Model(s, ai)}";
         if (s.Engine == SttEngine.Local) r.Speech = $"on this PC, model {s.LocalModel}";
         else { var stt = CloudStt.Provider(s); r.Speech = $"{stt.Name}, {CloudStt.Model(s, stt)}"; }
-        r.Features = $"Settings: hands-free {OnOff(s.HandsFreeIntents)}, computer control {OnOff(s.ControlCommands)}, tasks {OnOff(s.TasksEnabled)} ({s.TaskMaxSteps} steps), OCR {OnOff(s.ScreenOcr)}, vision {OnOff(s.ScreenVision)}";
+        r.Features = $"Settings: hands-free {OnOff(s.HandsFreeIntents)}, computer control {OnOff(s.ControlCommands)}, tasks {OnOff(s.TasksEnabled)} ({s.TaskMaxSteps} steps), OCR {OnOff(s.ScreenOcr)}, vision {OnOff(s.ScreenVision)}, see the screen when needed {OnOff(VisionLocator.Enabled(s))}";
+        // See the screen when needed: each look in this run, its model and answer (the label only when it is the user's own word).
+        foreach (var v in VisionLocator.Since(since.AddSeconds(-1)))
+            r.Vision.Add($"{When(v.Time, "HH:mm:ss")} {v.Kind}: {v.Outcome}; model {(v.Model.Length > 0 ? v.Model : "none")}; answer {(v.AnswerJson.Length > 0 ? v.AnswerJson : "none")}; {v.Ms} ms");
 
         bool window = hwnd != IntPtr.Zero && WindowControl.IsWindow(hwnd);
         bool own = window && ScreenReader.PidOf(hwnd) == Environment.ProcessId;

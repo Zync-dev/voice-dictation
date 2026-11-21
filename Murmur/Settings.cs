@@ -278,6 +278,19 @@ public class AppSettings
 
     // ---- end Problem reports ----
 
+    // ---- See the screen when needed (VisionLocator.cs) ----
+
+    /// <summary>
+    /// When UI Automation does not show a control (new Outlook's search box), a picture of that one app window goes to the
+    /// AI provider's vision model, which says where it is. Null (the default) means on when the provider in use has a model
+    /// that reads pictures, off otherwise; true or false is the user's own choice.
+    /// </summary>
+    public bool? SeeScreenWhenNeeded { get; set; }
+    /// <summary>The vision model per provider id; none means the recommended one (VisionLocator.Model).</summary>
+    public Dictionary<string, string> VisionModels { get; set; } = new();
+
+    // ---- end See the screen when needed ----
+
     // ---- persistence ----
 
     /// <summary>The real data folder; speech models always live here so test runs do not download them again.</summary>

@@ -57,8 +57,8 @@ public static class AppMemory
     private const int MaxApps = 100;
 
     /// <summary>The kinds of step that are remembered.</summary>
-    public static readonly IReadOnlySet<string> StepKinds = new HashSet<string> { "open_item", "search_box", "reply" };
-    private static readonly Regex MethodShape = new(@"^(?:scroll|tabs|search|box|click|key:(?:(?:Ctrl|Alt|Shift)\+){0,3}(?:[A-Z0-9]|F[1-9]|F1[0-2]|Enter|Esc|Tab|Space))$", RegexOptions.CultureInvariant);
+    public static readonly IReadOnlySet<string> StepKinds = new HashSet<string> { "open_item", "search_box", "reply", "click", "field" }; // click, field: See the screen when needed (VisionLocator.cs)
+    private static readonly Regex MethodShape = new(@"^(?:scroll|tabs|search|box|click|vision|key:(?:(?:Ctrl|Alt|Shift)\+){0,3}(?:[A-Z0-9]|F[1-9]|F1[0-2]|Enter|Esc|Tab|Space))$", RegexOptions.CultureInvariant);
 
     private static readonly object Gate = new();
     private static FileModel? _data;
@@ -77,7 +77,7 @@ public static class AppMemory
     /// <summary>The developer checks that drive tasks start with a fresh memory (in memory only).</summary>
     internal static void ForTestRun(string[] args)
     {
-        if (args.Length > 0 && args[0] is "--tasktest" or "--screentest" or "--controltest" or "--edittest" or "--speaktest" or "--learning-test" or "--reporttest")
+        if (args.Length > 0 && args[0] is "--tasktest" or "--screentest" or "--controltest" or "--edittest" or "--speaktest" or "--learning-test" or "--reporttest" or "--visiontest")
             UseTemporary();
     }
 

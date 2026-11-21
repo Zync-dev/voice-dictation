@@ -517,6 +517,8 @@ public sealed class ClickIntent : VoiceIntent
         var best = UiControl.Best(target, all.Where(c => !c.InDocument));
         if (best.Count == 0) best = UiControl.Best(target, all);
         LastFound = best;
+        // See the screen when needed (VisionLocator.cs): a control UI Automation does not show; the vision model looks for it.
+        if (best.Count == 0 && VisionLocator.Available(host.Settings)) { await ClickByVisionAsync(host, target, app, ct); return; }
         if (best.Count == 0) { host.Flash($"No button or link called “{target}” in {app}.", error: true); return; }
 
         var pickIndex = await Confirmations.ChooseAsync(host, $"Which “{best[0].Name}”?",
@@ -553,6 +555,35 @@ public sealed class ClickIntent : VoiceIntent
     }
 
     private static string Short(string s) => s.Length > 40 ? s[..39].TrimEnd() + "…" : s;
+
+    /// <summary>See the screen when needed: the vision model finds the control on a picture of the window; a risky or doubtful spot asks first.</summary>
+    private static async Task ClickByVisionAsync(IIntentHost host, string target, string app, CancellationToken ct)
+    {
+        host.ShowBusy($"Looking at {app}'s window…");
+        var seen = await VisionLocator.LocateAsync(host.Settings, host.Window, VisionKind.Button, target, ct);
+        string process = ScreenReader.ProcessOf(host.Window);
+        var profile = AppProfiles.For(host.Window);
+        if (seen.Hit is not { } hit)
+        {
+            AppMemory.Record(host.Settings, process, profile, "click", "vision", AppMemory.Outcome.Missed);
+            host.Flash($"No button or link called “{target}” in {app}. {seen.Why}", error: true);
+            return;
+        }
+        string shown = Short(hit.Answer.Label.Length > 0 ? hit.Answer.Label : target);
+        async Task Click()
+        {
+            bool ok = await VisionLocator.ClickAsync(host.Settings, host.Window, hit, ct);
+            AppMemory.Record(host.Settings, process, profile, "click", "vision", ok ? AppMemory.Outcome.Worked : AppMemory.Outcome.Failed);
+            LastClicked = ok ? shown : null;
+            host.Flash(ok ? $"Clicked “{shown}”" : $"“{shown}” in {app} could not be clicked.", error: !ok);
+        }
+        if (VisionLocator.ConfirmReason(VisionKind.Button, hit, target) is { } why)
+        {
+            await Confirmations.RequestAsync(host, $"Click “{shown}”?", $"Clicks “{shown}” in {app}, where the AI model saw it on a picture of the window. {why}", "Click", Click);
+            return;
+        }
+        await Click();
+    }
 
     /// <summary>For the developer checks.</summary>
     internal static List<UiControl.Clickable> LastFound = [];
