@@ -411,6 +411,8 @@ public partial class OverlayWindow : Window
     public void NoteOnResult(string text, Note kind, double seconds = 3)
     {
         if (!IsShowingResult || _state == PillState.Reading) return; // edit-speak: a note never cuts reading short
+        // A note never replaces a waiting question or a running task: closing that card would mean no, or stop the task.
+        if (_state is PillState.Confirm or PillState.Task) return;
         bool error = kind == Note.Error;
         if (_state == PillState.Rewriting) Enter(PillState.Result, "", "", Theme.OverlayScript);
         Animate(Words, OpacityProperty, 1, Theme.DurBase, Theme.EaseOut);

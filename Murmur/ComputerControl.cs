@@ -414,7 +414,8 @@ public static class UiControl
     private const int BudgetMs = 2000;
 
     /// <summary>Something that can be clicked: its name, kind, a few words of where it is ("in Report"), and the element.</summary>
-    public sealed record Clickable(string Name, string Kind, string Where, AutomationElement Element, int Order);
+    /// <summary><paramref name="InDocument"/>: inside a document or web page (content, not the app's own controls). <paramref name="InDialog"/>: inside a dialog.</summary>
+    public sealed record Clickable(string Name, string Kind, string Where, AutomationElement Element, int Order, bool InDocument = false, bool InDialog = false);
 
     private static readonly HashSet<ControlType> ClickTypes =
     [
@@ -429,27 +430,50 @@ public static class UiControl
         var found = new List<Clickable>();
         var root = AutomationElement.FromHandle(WindowControl.Root(hwnd));
         var walker = TreeWalker.ControlViewWalker;
-        var stack = new Stack<(AutomationElement E, string Group)>();
-        stack.Push((root, ""));
+        var stack = new Stack<(AutomationElement E, string Group, bool Doc, bool Dialog)>();
+        stack.Push((root, "", false, false));
         int nodes = 0;
         while (stack.Count > 0 && nodes < MaxNodes && watch.ElapsedMilliseconds < BudgetMs)
         {
-            var (e, group) = stack.Pop();
+            var (e, group, doc, dialog) = stack.Pop();
             nodes++;
             AutomationElement.AutomationElementInformation info;
             try { info = e.Current; } catch { continue; }
             if (info.IsPassword) continue;
             string name = (info.Name ?? "").Trim();
             if (ClickTypes.Contains(info.ControlType) && name.Length > 0 && info.IsEnabled && !info.IsOffscreen && HasClickPattern(e))
-                found.Add(new Clickable(name, info.ControlType.ProgrammaticName.Replace("ControlType.", ""), group, e, found.Count));
+                found.Add(new Clickable(name, info.ControlType.ProgrammaticName.Replace("ControlType.", ""), group, e, found.Count, doc, dialog));
+            bool innerDoc = doc || info.ControlType == ControlType.Document;
+            bool innerDialog = dialog || info.ControlType == ControlType.Window && IsDialog(e, info);
             string inner = info.ControlType == ControlType.Group || info.ControlType == ControlType.Pane && name.Length > 0 || info.ControlType == ControlType.Tab
                 ? (name.Length > 0 ? name : group) : group;
             var children = new List<AutomationElement>();
             try { for (var c = walker.GetFirstChild(e); c != null && children.Count < 400; c = walker.GetNextSibling(c)) children.Add(c); } catch { }
-            for (int i = children.Count - 1; i >= 0; i--) stack.Push((children[i], inner));
+            for (int i = children.Count - 1; i >= 0; i--) stack.Push((children[i], inner, innerDoc, innerDialog));
         }
         return found;
     }, BudgetMs + 500);
+
+    /// <summary>A Windows dialog ("#32770") or a modal window: its Yes / OK answers "Are you sure?".</summary>
+    private static bool IsDialog(AutomationElement e, AutomationElement.AutomationElementInformation info)
+    {
+        if (info.ClassName == "#32770" || info.LocalizedControlType is "dialog" or "dialogboks" or "dialogboksen") return true;
+        try { return e.TryGetCurrentPattern(WindowPattern.Pattern, out var wp) && ((WindowPattern)wp).Current.IsModal; }
+        catch { return false; }
+    }
+
+    /// <summary>Inside a document or web page (a parent is a Document).</summary>
+    internal static bool InDocument(AutomationElement e)
+    {
+        try
+        {
+            var walker = TreeWalker.ControlViewWalker;
+            for (var p = e; p != null && p != AutomationElement.RootElement; p = walker.GetParent(p))
+                if (p.Current.ControlType == ControlType.Document) return true;
+        }
+        catch { }
+        return false;
+    }
 
     private static bool HasClickPattern(AutomationElement e)
     {
@@ -614,7 +638,7 @@ public static class UiControl
     // ---------- the focused field ----------
 
     /// <summary>The focused element: editable, a password field, its process and its text (never a password's).</summary>
-    public sealed record Field(bool Editable, bool Password, int ProcessId, string Text, string Kind);
+    public sealed record Field(bool Editable, bool Password, int ProcessId, string Text, string Kind, bool InWebDocument = false);
 
     public static Task<Field?> FocusedFieldAsync(int budgetMs = 800) => Worker.RunAsync(() =>
     {
@@ -634,6 +658,6 @@ public static class UiControl
             }
         }
         catch { }
-        return new Field(editable, false, info.ProcessId, text, info.ControlType.ProgrammaticName.Replace("ControlType.", ""));
+        return new Field(editable, false, info.ProcessId, text, info.ControlType.ProgrammaticName.Replace("ControlType.", ""), InDocument(e));
     }, budgetMs);
 }

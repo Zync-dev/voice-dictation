@@ -112,6 +112,14 @@ public static class HandsFreeTests
         ("Ja tak", "", true, "confirm:yes"),
         ("Okay.", "", true, "confirm:yes"),
         ("Ok, send den", "", true, "confirm:yes"),
+        // natural yes answers: yes words strung together ("ja, send den")
+        ("Ja, send den", "", true, "confirm:yes"), ("Ja send", "", true, "confirm:yes"), ("Ja gør det", "", true, "confirm:yes"),
+        ("Ja tak, send den", "", true, "confirm:yes"), ("Jep, send den", "", true, "confirm:yes"), ("Yes, send it", "", true, "confirm:yes"),
+        ("Yes please send it", "", true, "confirm:yes"), ("Yes, go ahead", "", true, "confirm:yes"), ("Ja, bare send den", "", true, "confirm:yes"),
+        ("Ja ja", "", true, "confirm:yes"), ("Ja bekræft", "", true, "confirm:yes"),
+        // "kan du ikke …" is a polite request, not a "no"
+        ("Kan du ikke svare på mailen?", "", false, "reply"), ("Kan du ikke opsummere det her?", "", false, "summarize"),
+        ("Vil du ikke svare ham at jeg kommer?", "", false, "reply"),
         ("I have to do the dishes", "", false, "rewrite"),          // "to do" is not "to-do"
         ("Reply and say thanks", "", false, "reply"),
         ("Nej", "", true, "confirm:no"),
@@ -166,6 +174,7 @@ public static class HandsFreeTests
             {
                 Spoken = phrase, Normalized = IntentRules.Normalize(phrase), Selection = selection, App = app, Settings = settings,
                 Language = phrase.Any(c => "æøå".Contains(char.ToLowerInvariant(c))) ? "da" : null, PendingConfirmation = pending ? "Send this reply?" : null,
+                PendingVerb = pending ? "Send" : null,
             };
             var watch = Stopwatch.StartNew();
             var match = IntentRouter.MatchRules(request);
@@ -178,6 +187,23 @@ public static class HandsFreeTests
             Check(lines, got == expected, $"[{phrase}]{(selection.Length > 0 ? " +selection" : "")}{(pending ? " +waiting" : "")} => {got}{args}  ({ms:0.000}ms, then {avg:0.000}ms){(got == expected ? "" : $"  expected {expected}")}");
         }
         Check(lines, worst < 10, $"rule layer worst case {worst:0.000}ms per phrase (limit 10ms)");
+
+        // The AI router is asked only when a hint word starts a word of the phrase: writing a new email never waits for it.
+        foreach (var (phrase, worth) in new (string, bool)[]
+                 {
+                     ("Skriv en mail til Peter om mødet i morgen", false), ("Write an email to Peter about the meeting tomorrow", false),
+                     ("Skriv en besked til Mette om at jeg er forsinket", false), ("Write a short message to the team", false),
+                     ("Lav en tabel med tre kolonner", false), ("Tilføj en sætning om at vi starter klokken ni", false),
+                     ("Jeg skal have et overblik over tråden", true), ("Get back to her and say Friday works", true), ("Luk den her tab", true),
+                 })
+        {
+            bool got = IntentRouter.WorthAsking(IntentRequest.From(phrase, "", "da", app, settings));
+            Check(lines, got == worth, $"AI router {(got ? "asked" : "not asked")} for [{phrase}]{(got == worth ? "" : $"  expected {(worth ? "asked" : "not asked")}")}");
+        }
+        // An excluded app in front is never named to the AI router.
+        var excluded = new AppSettings { ExcludedApps = "outlook" };
+        string routerUser = IntentRouter.RouterUserPrompt(IntentRequest.From("svar ham", "", "da", app, excluded));
+        Check(lines, routerUser.Contains("App in front: unknown") && !routerUser.Contains("outlook"), "an excluded app in front reaches the AI router as “unknown”");
 
         // The AI router never sees the screen; its prompt lists the intents only.
         string prompt = IntentRouter.RouterPrompt(IntentRouter.Intents);

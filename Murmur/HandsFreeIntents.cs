@@ -15,17 +15,40 @@ public sealed class ConfirmIntent : VoiceIntent
     public override int Order => 10;
     public override bool Offer(IntentRequest request) => request.PendingConfirmation != null;
 
-    private const string Yes = @"ja|jo|jep|jeps|yes|yeah|yep|ok|okay|bekræft|bekræfter|bekræftet|confirm|confirmed|send|afsend|send den|send det|send it|send now|gør det|do it|go ahead|kør|kør på|godkend|godkendt|approve|sure|selvfølgelig";
+    // Neutral yes words answer any question. Words that name an action ("send", "luk", "slet") answer only the
+    // question about that action: "send" never confirms "Close Chrome?" or "Delete this text?". ("Kør" / "go" start a
+    // task plan only, through TaskGoIntent.)
+    private const string Yes = @"ja|jo|jep|jeps|yes|yeah|yep|ok|okay|bekræft|bekræfter|bekræftet|confirm|confirmed|gør det|gør bare det|do it|go ahead|godkend|godkendt|approve|sure|selvfølgelig|klart|gerne";
+    private const string Filler = @"tak|please|thanks|den|det|it|nu|now|gerne|bare|just|så|then|venligst";
     private const string No = @"nej|no|nope|annuller|annullér|afbryd|stop|cancel|lad være|lad vær|don t|do not|vent|wait|fortryd|ikke nu|not now|glem det|forget it";
+
+    /// <summary>The words that name the card's own action, for its verb (the keycap): "send" only for Send, and so on.</summary>
+    internal static string VerbWords(string? verb) => (verb ?? "").ToLowerInvariant() switch
+    {
+        "send" => @"send|afsend|send den|send det|send it|send now|send svaret|send the reply|send mailen|send beskeden",
+        "close" => @"luk|luk den|luk det|luk fanen|luk vinduet|close|close it",
+        "delete" => @"slet|slet den|slet det|delete|delete it",
+        "click" => @"klik|klik på den|click|click it",
+        "enter" => @"tryk enter|press enter|enter",
+        _ => "",
+    };
+
+    /// <summary>"Nej", "annuller", "cancel that" …: the whole phrase starts with a no.</summary>
+    internal static bool IsNo(string normalized) => IntentRules.Compiled($@"^(?:{No})(?:\s.*)?$").IsMatch(normalized);
+
+    /// <summary>A yes to the waiting question with this verb: yes words (and the verb's own words) strung together, "ja, send den".</summary>
+    internal static bool IsYes(string normalized, string? verb)
+    {
+        string words = VerbWords(verb) is { Length: > 0 } own ? Yes + "|" + own : Yes;
+        return IntentRules.Compiled($@"^(?:{words})(?:\s+(?:{words}|{Filler}))*$").IsMatch(normalized);
+    }
 
     public override IntentMatch? Match(IntentRequest r)
     {
         if (r.PendingConfirmation == null) return null;
-        // The whole phrase must be the answer ("ja tak", "send it now"), never a sentence that merely contains "send".
-        if (IntentRules.Compiled($@"^(?:{Yes})(?:\s+(?:tak|please|thanks|den|det|it|nu|now|gerne))*$").IsMatch(r.Normalized))
-            return new IntentMatch(this, new() { ["answer"] = "yes" });
-        if (IntentRules.Compiled($@"^(?:{No})(?:\s.*)?$").IsMatch(r.Normalized))
-            return new IntentMatch(this, new() { ["answer"] = "no" });
+        // The whole phrase must be the answer ("ja tak", "ja, send den"), never a sentence that merely contains "send".
+        if (IsYes(r.Normalized, r.PendingVerb)) return new IntentMatch(this, new() { ["answer"] = "yes" });
+        if (IsNo(r.Normalized)) return new IntentMatch(this, new() { ["answer"] = "no" });
         return null;
     }
 
@@ -127,7 +150,7 @@ public sealed class SummarizeIntent : ScreenAnswerIntent
 
     protected override string[] Leads { get; } =
     [
-        @"(?:opsummer|opsummér|opsumér|opsumere|resumer|resumér|resumere|sammenfat|sammenfatte)",
+        @"(?:opsummer|opsummér|opsummere|opsumér|opsumere|resumer|resumér|resumere|sammenfat|sammenfatte)",
         @"(?:lav|giv) (?:mig )?(?:en |et )?(?:kort |hurtig |hurtigt )?(?:opsummering|resume|resumé|sammenfatning|sammendrag|overblik)",
         @"kort fortalt|hvad står der kort fortalt",
         @"(?:summari[sz]e|sum up|recap)",
@@ -143,7 +166,7 @@ public sealed class ScreenQuestionIntent : ScreenAnswerIntent
     public override string Id => "screen_question";
     public override string Description => "Answer a question about what is in the window in front or the selected text (\"what do they want?\", \"hvornår er deadline?\"), shown on the card. Argument question: the question.";
     public override IReadOnlyDictionary<string, string> Arguments { get; } = new Dictionary<string, string> { ["question"] = "the user's question, in their words" };
-    public override string[] Hints { get; } = ["hvad vil", "what do", "what does", "deadline", "skærm", "screen", "mail", "besked", "message", "siden", "page", "vindue", "window"];
+    public override string[] Hints { get; } = ["hvad vil", "hvad står", "what do", "what does", "what is in", "deadline", "skærm", "screen"];
     public override int Order => 80;
     protected override string Title => "Answer";
     protected override string Instruction(IntentRun run)
@@ -341,8 +364,11 @@ public static class ReplyTargets
         string app = ScreenReader.Pretty(host.App.Process);
         var focus = await ScreenReader.FocusAsync();
         bool sameApp = focus != null && focus.ProcessId == ScreenReader.PidOf(host.Window);
+        // In a browser only a field of the page itself: never the address bar or the browser's own search box, where the
+        // draft would go to a search engine and Enter would not send it.
+        bool browser = IsBrowser(host.App);
 
-        if (sameApp && focus is { Editable: true, Password: false })
+        if (sameApp && focus is { Editable: true, Password: false } && (!browser || focus.InWebDocument))
         {
             await host.PasteAsync(draft, "Reply pasted, not sent");
             return;
@@ -360,7 +386,7 @@ public static class ReplyTargets
                 {
                     await Task.Delay(150, ct);
                     var now = await ScreenReader.FocusAsync();
-                    if (now is { Editable: true, Password: false } && now.ProcessId == ScreenReader.PidOf(host.Window))
+                    if (now is { Editable: true, Password: false } && now.ProcessId == ScreenReader.PidOf(host.Window) && (!browser || now.InWebDocument))
                     {
                         await Task.Delay(120, ct); // let the reply field finish opening
                         await host.PasteAsync(draft, "Reply pasted, not sent");

@@ -183,7 +183,7 @@ public static class EditSpeakTests
             var request = new IntentRequest
             {
                 Spoken = phrase, Normalized = IntentRules.Normalize(phrase), Selection = selection, App = app, Settings = settings,
-                PendingConfirmation = pending ? "Send this reply?" : null,
+                PendingConfirmation = pending ? "Send this reply?" : null, PendingVerb = pending ? "Send" : null,
             };
             var m = IntentRouter.MatchRules(request);
             string got = m == null ? "rewrite" : m.Intent.Id == "confirm" ? "confirm:" + m.Arg("answer") : m.Intent.Id;
@@ -888,6 +888,8 @@ public static class EditSpeakTests
             await Task.Delay(1500);
             SaveCard("reading-mail");
             var text = reader2.LastAudio?.Chunk.Text ?? "";
+            // The command is done while reading goes on, so the controller is free for "stop", "læs langsommere", "fortsæt".
+            Check(lines, task.IsCompleted && hf.LastWork.IsCompleted && reader2.IsActive, $"“læs mailen op” returns while reading goes on (command done: {task.IsCompleted}, reading: {reader2.IsActive})");
             Check(lines, hf.LastRoute.StartsWith("read_aloud") && hf.LastRead is { } read && read.Main.Contains("Vesterbrogade"), $"“læs mailen op” read the open mail ({hf.LastRead?.Source}, {hf.LastRead?.Main.Length} chars), first piece “{EditPlanner.Short(text, 60)}”");
             reader2.Stop(byUser: true);
             await task;

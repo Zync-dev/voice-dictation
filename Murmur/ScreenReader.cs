@@ -128,7 +128,8 @@ public static partial class ScreenReader
             else
             {
                 var ocrWatch = Stopwatch.StartNew();
-                var (ocrText, language, why) = await OcrAsync(picture, s);
+                // Off the UI thread: enlarging and copying a big picture takes up to a second, and the card must stay alive.
+                var (ocrText, language, why) = await Task.Run(() => OcrAsync(picture, s), ct);
                 notes.Add($"ocr: {ocrText.Length} chars ({(language.Length > 0 ? language : why)}) in {ocrWatch.ElapsedMilliseconds}ms, picture {picture.Width}x{picture.Height}");
                 if (Useful(ocrText) > Useful(text)) { text = Clean(ocrText); main = ""; source = "ocr"; ocrLanguage = language; }
             }
@@ -351,7 +352,11 @@ public static partial class ScreenReader
     // ---------- the focused field ----------
 
     /// <summary>What has keyboard focus now: an editable text field (not a password), and its process.</summary>
-    public sealed record FocusInfo(bool Editable, bool Password, int ProcessId, string ControlType, bool InWebDocument);
+    public sealed record FocusInfo(bool Editable, bool Password, int ProcessId, string ControlType, bool InWebDocument)
+    {
+        /// <summary>The element's UI Automation runtime id ("" when unknown): the same field, later.</summary>
+        public string RuntimeId { get; init; } = "";
+    }
 
     /// <summary>The focused element, within <paramref name="budgetMs"/>; null when it could not be told.</summary>
     public static Task<FocusInfo?> FocusAsync(int budgetMs = 400) => ContextReader.Urgent.RunAsync(() =>
@@ -369,7 +374,9 @@ public static partial class ScreenReader
                 if (p.Current.ControlType == System.Windows.Automation.ControlType.Document) { inDocument = true; break; }
         }
         catch { }
-        return new FocusInfo(editable, password || Native.FocusedEditIsPassword(), e.Current.ProcessId, type.ProgrammaticName.Replace("ControlType.", ""), inDocument);
+        string id = "";
+        try { id = string.Join(".", e.GetRuntimeId()); } catch { }
+        return new FocusInfo(editable, password || Native.FocusedEditIsPassword(), e.Current.ProcessId, type.ProgrammaticName.Replace("ControlType.", ""), inDocument) { RuntimeId = id };
     }, budgetMs);
 
     /// <summary>A document or edit that takes typing: not read-only by its value pattern, or a rich editor that only exposes text.</summary>

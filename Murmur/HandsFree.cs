@@ -60,6 +60,7 @@ public sealed partial class HandsFree : IIntentHost
             Spoken = spoken, Normalized = IntentRules.Normalize(spoken), Language = language, Selection = selection ?? "", App = app, Settings = Settings,
             PendingConfirmation = _pending?.Question,
             PendingChoices = _pending?.Choices, // Hands-free: computer control (numbered choices on the card)
+            PendingVerb = _pending?.Verb,
         };
         var (match, timing) = await IntentRouter.RouteAsync(request, Llm, ct);
         // With hands-free intents off, only the answer to a waiting confirmation is taken.
@@ -70,7 +71,13 @@ public sealed partial class HandsFree : IIntentHost
         // (Computer control: "nummer to" and "igen" answer the waiting question too, see Confirmations.cs.)
         bool answering = waiting && match?.Intent is ConfirmIntent or IConfirmationAnswer;
         if (waiting && !answering) Resolve(false);
-        if (match == null) return false;
+        if (match == null)
+        {
+            // A question was waiting and this was no answer Murmur understood ("ja, send den" to "Close Chrome?"): it is
+            // a no, said on the card, and never typed into the app as a command.
+            if (waiting) { Flash("Cancelled. Nothing was done."); return true; }
+            return false;
+        }
 
         // An answer to a waiting question keeps the window the question was about: a yes never moves to another app.
         if (!answering)
@@ -230,6 +237,8 @@ public sealed partial class HandsFree : IIntentHost
         public string Question { get; } = question;
         /// <summary>Computer control: the numbered choices when the card asks "which one?" (null for a yes/no question).</summary>
         public IReadOnlyList<string>? Choices { get; init; }
+        /// <summary>The keycap's verb ("Send", "Close", "Run"): which action words count as a yes (ConfirmIntent).</summary>
+        public string? Verb { get; init; }
         public TaskCompletionSource<bool> Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         /// <summary>The card was replaced by a recording that may answer it (command mode is reached through dictation's keys).</summary>
         public bool Parked;
@@ -238,7 +247,7 @@ public sealed partial class HandsFree : IIntentHost
     public Task<bool> ConfirmAsync(string question, string detail, string verb, TimeSpan? timeout = null)
     {
         Resolve(false); // only one question at a time
-        var pending = new Pending(question);
+        var pending = new Pending(question) { Verb = verb };
         _pending = pending;
         var shown = timeout ?? Confirmations.Timeout(Settings);
         _overlay.ShowConfirm(question, detail, verb, shown);

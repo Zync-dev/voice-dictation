@@ -132,7 +132,7 @@ public static class TaskPlanner
     internal static string UserPrompt(IntentRequest r, IEnumerable<string> openApps)
     {
         var apps = openApps.Where(a => a.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Take(15).ToList();
-        return $"<request>{r.Spoken.Replace("</request>", "")}</request>\nApp in front: {ScreenReader.Pretty(r.App.Process)}\nApps open now: {(apps.Count > 0 ? string.Join(", ", apps) : "unknown")}";
+        return $"<request>{r.Spoken.Replace("</request>", "")}</request>\nApp in front: {(ScreenReader.IsExcluded(r.App.Process, r.Settings) ? "unknown" : ScreenReader.Pretty(r.App.Process))}\nApps open now: {(apps.Count > 0 ? string.Join(", ", apps) : "unknown")}";
     }
 
     /// <summary>The user said send ("send", "afsend", "send den", "send it"): only then may a plan send.</summary>
@@ -141,7 +141,11 @@ public static class TaskPlanner
     public static async Task<(TaskPlan? Plan, string Error)> PlanAsync(AppSettings s, IntentRequest r, CancellationToken ct)
     {
         if (TestPlan != null) return TestPlan(r) is { } p ? Check(p, r.Spoken, s) : (null, "No plan.");
-        var open = AppCatalog.Running().Select(a => a.Name);
+        // Excluded apps are never named to the AI model, not even as open.
+        var excluded = ContextAssist.ExcludedNames(s.ExcludedApps);
+        var open = AppCatalog.Running()
+            .Where(a => !ScreenReader.IsExcluded(a.Process, s) && !excluded.Any(x => AppCatalog.Score(x, a.Name) >= 0.9))
+            .Select(a => a.Name);
         TaskRunner.AiCalls++;
         string answer = await AiCall.ChatAsync(s, SystemPrompt(MaxSteps(s)), UserPrompt(r, open), json: true, ct: ct, maxSeconds: 20);
         Log.Write("Task plan: " + answer.Replace("\n", " "));
@@ -625,15 +629,22 @@ public static class TaskRunner
         if (all == null) return new StepResult(false, $"{app} did not answer in time.");
         ctx.Ct.ThrowIfCancellationRequested();
         UiControl.Clickable? pick = null;
+        bool byMeaning = false;
         if (item)
         {
-            var items = all.Where(c => ItemKinds.Contains(c.Kind)).ToList();
+            // List items, never a link written inside the open message or page (whoever wrote it chose its words):
+            // such links are candidates only when the window has nothing else, and then opening one asks first.
+            var items = all.Where(c => ItemKinds.Contains(c.Kind) && !(c.Kind == "Hyperlink" && c.InDocument)).ToList();
+            if (items.Count == 0) items = all.Where(c => ItemKinds.Contains(c.Kind)).ToList();
             if (items.Count == 0) items = all;
-            pick = ItemByWords(target, items) ?? await PickByMeaningAsync(ctx, target, items, "the email, message, conversation or list item");
+            pick = ItemByWords(target, items);
+            if (pick == null) { pick = await PickByMeaningAsync(ctx, target, items, "the email, message, conversation or list item"); byMeaning = pick != null; }
         }
         else
         {
-            var best = UiControl.Best(target, all);
+            // The app's own buttons first, then the page's or message's.
+            var best = UiControl.Best(target, all.Where(c => !c.InDocument));
+            if (best.Count == 0) best = UiControl.Best(target, all);
             if (best.Count > 1)
             {
                 int? i = await ctx.UserAsync(() => Confirmations.ChooseAsync(hf, $"Which “{best[0].Name}”?",
@@ -641,17 +652,25 @@ public static class TaskRunner
                 if (i is not { } n) return new StepResult(false, "You did not pick one.", Declined: true);
                 pick = best[n];
             }
-            else pick = best.Count == 1 ? best[0] : await PickByMeaningAsync(ctx, target, all, "the button, link, tab or menu item");
+            else if (best.Count == 1) pick = best[0];
+            else { pick = await PickByMeaningAsync(ctx, target, all, "the button, link, tab or menu item"); byMeaning = pick != null; }
         }
         if (pick == null) return new StepResult(false, item ? $"Found nothing like “{target}” in {app}." : $"No button or link called “{target}” in {app}.");
         LastPicked = pick.Name;
 
-        // Never on its own: a name that means send, submit, delete, buy, pay or close asks first, at this moment.
-        if (Confirmations.IsRisky(pick.Name))
+        // Never on its own: a name that means send, submit, delete, buy, pay or close asks first, at this moment; so does a
+        // button the AI picked by meaning (the plan named another), and a link inside the message or page that was not
+        // named exactly.
+        bool docLink = pick.InDocument && pick.Kind == "Hyperlink" && (item || UiControl.Score(target, pick.Name) < 0.96);
+        bool risky = Confirmations.IsRisky(pick.Name, pick.InDialog);
+        if (risky || (byMeaning && !item) || docLink)
         {
             bool clicked = false;
-            bool yes = await ctx.UserAsync(() => Confirmations.RequestAsync(hf, $"Click “{Short(pick.Name, 40)}”?",
-                $"Step {ctx.Index + 1} of the task clicks “{Short(pick.Name, 60)}” in {app}. It may send, delete, buy or close something, and that cannot be taken back.", "Click",
+            string why = risky ? "It may send, delete, buy or close something, and that cannot be taken back."
+                : docLink ? "It is a link inside the page or message, not one of the app's own buttons, and goes wherever it points."
+                : $"The plan said “{Short(target, 40)}”; this is the closest Murmur found.";
+            bool yes = await ctx.UserAsync(() => Confirmations.RequestAsync(hf, docLink ? $"Open the link “{Short(pick.Name, 40)}”?" : $"Click “{Short(pick.Name, 40)}”?",
+                $"Step {ctx.Index + 1} of the task clicks “{Short(pick.Name, 60)}” in {app}. {why}", "Click",
                 async () => clicked = await ClickNowAsync(ctx, pick)));
             if (!yes) return new StepResult(false, $"You did not confirm clicking “{Short(pick.Name, 40)}”.", Declined: true);
             return clicked ? new StepResult(true, $"clicked {pick.Name}") : new StepResult(false, $"“{Short(pick.Name, 40)}” could not be clicked.");
@@ -857,13 +876,19 @@ public static class TaskRunner
             _ => ([], 0x0D, "Enter"),
         };
         if (k.Vk != 0x0D) return await hf.PressChordAsync(k.Mods, k.Vk, k.Label) ? new StepResult(true, "pressed " + k.Label) : new StepResult(false, await Control.WhyNotAsync(hf));
-        if (Control.PlainEditors.Contains(ScreenReader.ProcessOf(ctx.Target)))
-            return await hf.PressChordAsync([], 0x0D, "Enter", enterIsSafe: true) ? new StepResult(true, "pressed Enter") : new StepResult(false, await Control.WhyNotAsync(hf));
-        bool pressed = false;
+        // Enter in a task always asks, as the plan card says ("Press Enter (asks first)"), in every app.
+        bool pressed = false, moved = false;
+        var spot = await Control.SpotAsync(ctx.Target, withFocus: true);
         bool yes = await ctx.UserAsync(() => Confirmations.RequestAsync(hf, $"Press Enter in {app}?",
             $"Step {ctx.Index + 1} of the task presses Enter in {app}, which may send, submit or confirm something. It cannot be taken back.", "Enter",
-            async () => pressed = await hf.PressAsync(0, 0x0D, "Enter")));
+            async () =>
+            {
+                // Only into the window and field the card was about.
+                if (!await Control.StillAsync(spot, checkTitle: false, checkFocus: true)) { moved = true; return; }
+                pressed = await hf.PressAsync(0, 0x0D, "Enter");
+            }));
         if (!yes) return new StepResult(false, "You did not confirm Enter.", Declined: true);
+        if (moved) return new StepResult(false, Control.Changed);
         return pressed ? new StepResult(true, "pressed Enter") : new StepResult(false, await Control.WhyNotAsync(hf));
     }
 
@@ -1003,9 +1028,11 @@ public sealed class TaskStopIntent : VoiceIntent
     public override int Order => 7;
     public override bool Offer(IntentRequest r) => TaskRun.Current != null;
 
-    public override IntentMatch? Match(IntentRequest r) =>
-        TaskRun.Current != null && IntentRules.Compiled(@"^(?:stop|stop det|stop nu|stop opgaven|stop den|stands|stands det|afbryd|afbryd det|afbryd opgaven|hold op|annuller|annullér|annuller opgaven|cancel|cancel it|cancel the task|stop it|stop the task|stop that|abort|halt|nej stop|no stop)$").IsMatch(r.Normalized)
-            ? new IntentMatch(this) : null;
+    public override IntentMatch? Match(IntentRequest r) => TaskRun.Current != null && IsStop(r.Normalized) ? new IntentMatch(this) : null;
+
+    /// <summary>The words that stop a task (also never a pick on a "Which one?" card, Confirmations.ParseChoice).</summary>
+    internal static bool IsStop(string normalized) =>
+        IntentRules.Compiled(@"^(?:stop|stop det|stop nu|stop opgaven|stop den|stands|stands det|afbryd|afbryd det|afbryd opgaven|hold op|annuller|annullér|annuller opgaven|cancel|cancel it|cancel the task|stop it|stop the task|stop that|abort|halt|nej stop|no stop)$").IsMatch(normalized);
 
     public override Task RunAsync(IntentRun run, CancellationToken ct)
     {

@@ -130,6 +130,14 @@ public static class ControlTests
         ("Send", "", "confirm", false, "confirm:yes"), ("Ja", "", "confirm", false, "confirm:yes"), ("Bekræft", "", "confirm", false, "confirm:yes"),
         ("Yes", "", "confirm", false, "confirm:yes"), ("Confirm", "", "confirm", false, "confirm:yes"), ("Annuller", "", "confirm", false, "confirm:no"),
         ("Cancel", "", "confirm", false, "confirm:no"), ("Nej", "", "confirm", false, "confirm:no"),
+        // "send" and "kør" answer only the question about sending or running ("close": "Close Chrome?", verb Close)
+        ("Send", "", "close", false, "rewrite"), ("Ja, send den", "", "close", false, "rewrite"), ("Kør", "", "close", false, "rewrite"),
+        ("Ja", "", "close", false, "confirm:yes"), ("Luk den", "", "close", false, "confirm:yes"), ("Yes, close it", "", "close", false, "confirm:yes"),
+        ("Ja, send den", "", "confirm", false, "confirm:yes"), ("Yes, go ahead", "", "close", false, "confirm:yes"),
+        // a no to a "Which one?" never picks the option that has that word ("subs": Annuller abonnement / Skift abonnement)
+        ("Annuller", "", "subs", false, "confirm:no"), ("Cancel", "", "subs", false, "confirm:no"), ("Nej", "", "subs", false, "confirm:no"),
+        ("Stop", "", "subs", false, "confirm:no"), ("Fortryd", "", "subs", false, "confirm:no"), ("Afbryd", "", "subs", false, "confirm:no"),
+        ("Annuller abonnement", "", "subs", false, "choose:1"), ("Skift", "", "subs", false, "choose:2"), ("Nummer et", "", "subs", false, "choose:1"),
         // "send" after a pasted reply
         ("Send", "", "", true, "send_reply"), ("Send den", "", "", true, "send_reply"), ("Send it", "", "", true, "send_reply"), ("Send svaret", "", "", true, "send_reply"),
         ("Send the reply", "", "", true, "send_reply"), ("Send", "", "confirm", true, "confirm:yes"),
@@ -142,6 +150,12 @@ public static class ControlTests
         ("Gør det her mere formelt", "Hej", "", false, "rewrite"), ("Make this shorter", "long text", "", false, "rewrite"),
         ("Skriv en mail til Peter om at mødet er flyttet", "", "", false, "rewrite"), ("Translate this into German", "Hello", "", false, "rewrite"),
         ("Svar på mailen og sig ja tak", "", "", false, "reply"), ("Opsummer det her", "", "", false, "summarize"),
+        // rewrites of the selection, not an app switch
+        ("Skift til engelsk", "Hej med dig", "", false, "rewrite"), ("Skift til du-form", "De kan komme", "", false, "rewrite"),
+        ("Change to past tense", "I go home", "", false, "rewrite"), ("Change to a more formal tone", "hey there", "", false, "rewrite"),
+        ("Skift til Chrome", "Hej med dig", "", false, "switch_app"),
+        // "kan du ikke …" is a polite request
+        ("Kan du ikke scrolle ned?", "", "", false, "scroll:down"), ("Kunne du ikke åbne Slack?", "", "", false, "open_app"),
     ];
 
     private static string Got(IntentMatch? m)
@@ -162,13 +176,15 @@ public static class ControlTests
         lines.Add($"first call ({IntentRouter.Intents.Count} intents: {string.Join(", ", IntentRouter.Intents.Select(i => i.Id))}): {cold.Elapsed.TotalMilliseconds:0.0}ms");
         double worst = 0;
         string[] choices = ["Export (in Report)", "Export (in Data)"];
+        string[] subs = ["Annuller abonnement", "Skift abonnement"];
         foreach (var (phrase, selection, waiting, reply, expected) in RouterCases)
         {
             ReplyMemory.Set(reply ? DateTime.UtcNow : null);
             var request = new IntentRequest
             {
                 Spoken = phrase, Normalized = IntentRules.Normalize(phrase), Selection = selection, App = app, Settings = settings,
-                PendingConfirmation = waiting.Length > 0 ? "Which one?" : null, PendingChoices = waiting == "choices" ? choices : null,
+                PendingConfirmation = waiting.Length > 0 ? "Which one?" : null, PendingChoices = waiting == "choices" ? choices : waiting == "subs" ? subs : null,
+                PendingVerb = waiting switch { "confirm" => "Send", "close" => "Close", _ => null },
             };
             var watch = Stopwatch.StartNew();
             var match = IntentRouter.MatchRules(request);
@@ -189,7 +205,7 @@ public static class ControlTests
             var request = new IntentRequest
             {
                 Spoken = phrase, Normalized = IntentRules.Normalize(phrase), Selection = selection, App = new ActiveWindowInfo("outlook", "Møde torsdag - Message"), Settings = settings,
-                PendingConfirmation = pending ? "Send this reply?" : null,
+                PendingConfirmation = pending ? "Send this reply?" : null, PendingVerb = pending ? "Send" : null,
             };
             string got = Got(IntentRouter.MatchRules(request));
             if (got == expected) same++; else wrong.Add($"[{phrase}] {got} (expected {expected})");
@@ -201,6 +217,17 @@ public static class ControlTests
         var taken = new[] { "Åbn Slack", "Scroll ned", "Klik på Arkivér", "Luk vinduet", "Kopiér", "Igen" }
             .Where(p => IntentRouter.MatchRules(IntentRequest.From(p, "", "da", app, off)) is { } m && m.Intent.Id != "confirm").ToList();
         Check(lines, taken.Count == 0, $"computer control off: its phrases stay ordinary commands{(taken.Count > 0 ? " (taken: " + string.Join(", ", taken) + ")" : "")}");
+
+        // Names that act on their own ask before a click; ordinary ones do not.
+        string[] risky = ["Unsubscribe", "Unsend", "Cancel subscription", "Annuller abonnement", "Annuller ordre", "Opsig", "Afmeld", "Don't Save", "Gem ikke",
+            "Kassér ændringer", "Block sender", "Bloker", "Report spam", "Leave group", "Forlad gruppen", "Decline", "Reject", "Afvis", "Replace", "Erstat",
+            "Allow", "Tillad", "Install", "Run anyway", "Send", "Slet", "Delete", "Køb nu", "Close"];
+        string[] safe = ["Archive", "Arkivér", "Gem", "Save", "Next", "Reply", "Svar", "Settings", "Export", "Inbox", "Yes", "OK", "Ja"];
+        var missed = risky.Where(n => !Confirmations.IsRisky(n)).ToList();
+        var flagged = safe.Where(n => Confirmations.IsRisky(n)).ToList();
+        Check(lines, missed.Count == 0 && flagged.Count == 0, $"risky names ask first ({risky.Length}), ordinary ones do not ({safe.Length}){(missed.Count > 0 ? "; missed: " + string.Join(", ", missed) : "")}{(flagged.Count > 0 ? "; flagged: " + string.Join(", ", flagged) : "")}");
+        Check(lines, Confirmations.IsRisky("Yes", inDialog: true) && Confirmations.IsRisky("OK", inDialog: true) && Confirmations.IsRisky("Ja", inDialog: true),
+              "a dialog's Yes / OK / Ja asks first (it answers “Are you sure?”)");
 
         string prompt = IntentRouter.RouterPrompt(IntentRouter.Intents);
         Check(lines, prompt.Contains("- click:") && prompt.Contains("- open_app:") && !prompt.Contains("screen_content"), "the AI router prompt lists the control intents and carries nothing from the screen");

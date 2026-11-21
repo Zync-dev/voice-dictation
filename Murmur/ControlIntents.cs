@@ -47,8 +47,44 @@ internal static class Control
 
     public const ushort Ctrl = (ushort)Native.VK_CONTROL, Shift = (ushort)Native.VK_SHIFT, Alt = (ushort)Native.VK_MENU;
 
-    /// <summary>Apps where Enter only starts a new line, so "tryk enter" needs no confirmation there.</summary>
-    public static readonly HashSet<string> PlainEditors = new(StringComparer.OrdinalIgnoreCase) { "notepad", "notepad++", "wordpad", "winword", "code", "sublime_text", "devenv", "rider64" };
+    /// <summary>
+    /// Apps where Enter in the text itself only starts a new line, so "tryk enter" needs no confirmation there, and only
+    /// while the focus is in the document (<see cref="EnterIsSafeAsync"/>). Not IDEs: their terminal and chat panels run
+    /// or send on Enter.
+    /// </summary>
+    public static readonly HashSet<string> PlainEditors = new(StringComparer.OrdinalIgnoreCase) { "notepad", "notepad++", "wordpad", "winword", "sublime_text" };
+
+    /// <summary>Enter only adds a line: a plain editor, with an editable document or edit field (not a dialog's button) focused.</summary>
+    public static async Task<bool> EnterIsSafeAsync(string process)
+    {
+        if (!PlainEditors.Contains(process)) return false;
+        var focus = await ScreenReader.FocusAsync();
+        return focus is { Editable: true, Password: false, ControlType: "Document" or "Edit" };
+    }
+
+    /// <summary>Where a question was about: the top-level window, its title, and the focused element.</summary>
+    public sealed record Spot(IntPtr Root, string Title, string FocusId);
+
+    public static async Task<Spot> SpotAsync(IntPtr window, bool withFocus)
+    {
+        var root = WindowControl.Root(window);
+        string focus = withFocus ? (await ScreenReader.FocusAsync())?.RuntimeId ?? "" : "";
+        return new Spot(root, ScreenReader.WindowTitle(root), focus);
+    }
+
+    /// <summary>
+    /// After a yes: the same window is still in front (not merely the same process: every Chrome window is one), with the
+    /// same title (the same tab), and, when asked, the same focused element. Else nothing is pressed.
+    /// </summary>
+    public static async Task<bool> StillAsync(Spot spot, bool checkTitle, bool checkFocus)
+    {
+        if (WindowControl.Root(Native.GetForegroundWindow()) != spot.Root) return false;
+        if (checkTitle && ScreenReader.WindowTitle(spot.Root) != spot.Title) return false;
+        if (checkFocus && spot.FocusId.Length > 0 && ((await ScreenReader.FocusAsync())?.RuntimeId ?? "") != spot.FocusId) return false;
+        return true;
+    }
+
+    public const string Changed = "The window changed. Nothing was done.";
 }
 
 /// <summary>"Luk vinduet", "close the window", "minimer", "maksimer", "gendan", "luk fanen", "close the tab".</summary>
@@ -58,7 +94,7 @@ public sealed class WindowIntent : VoiceIntent
     public override string Id => "window";
     public override string Description => "Close, minimize, maximize or restore the window in front, or close the current tab. Argument action: close, close_tab, minimize, maximize or restore.";
     public override IReadOnlyDictionary<string, string> Arguments { get; } = new Dictionary<string, string> { ["action"] = "close, close_tab, minimize, maximize or restore" };
-    public override string[] Hints { get; } = ["vindue", "window", "minim", "maksim", "maxim", "fane", "tab"];
+    public override string[] Hints { get; } = ["vindue", "window", "minim", "maksim", "maxim", "fane", "tab ", "tabs "];
     public override int Order => 102;
     public override bool Offer(IntentRequest r) => Control.On(r);
 
@@ -103,9 +139,15 @@ public sealed class WindowIntent : VoiceIntent
                     });
                 break;
             case "close_tab":
+                var spot = await Control.SpotAsync(window, withFocus: false);
                 await Confirmations.RequestAsync(host, "Close this tab?",
                     $"Presses Ctrl+W in {app}, which closes the tab you are on in “{shortTitle}”. Anything not saved in it may be lost.", "Close",
-                    () => Control.PressAsync(host, [Control.Ctrl], (ushort)'W', "Ctrl+W", $"Pressed Ctrl+W in {app}"));
+                    async () =>
+                    {
+                        // Only the window and tab the card named: another window of the same app, or another tab, gets nothing.
+                        if (!await Control.StillAsync(spot, checkTitle: true, checkFocus: false)) { host.Flash(Control.Changed); return; }
+                        await Control.PressAsync(host, [Control.Ctrl], (ushort)'W', "Ctrl+W", $"Pressed Ctrl+W in {app}");
+                    });
                 break;
         }
     }
@@ -118,7 +160,7 @@ public sealed class NavigateIntent : VoiceIntent
     public override string Id => "navigate";
     public override string Description => "Go back or forward (as in a browser), open a new tab, or go to the next or previous tab. Argument action: back, forward, new_tab, next_tab or previous_tab.";
     public override IReadOnlyDictionary<string, string> Arguments { get; } = new Dictionary<string, string> { ["action"] = "back, forward, new_tab, next_tab or previous_tab" };
-    public override string[] Hints { get; } = ["tilbage", "back", "frem", "forward", "fane", "tab"];
+    public override string[] Hints { get; } = ["tilbage", "back", "frem", "forward", "fane", "tab ", "tabs "];
     public override int Order => 104;
     public override bool Offer(IntentRequest r) => Control.On(r);
 
@@ -239,8 +281,8 @@ public sealed class PressKeyIntent : VoiceIntent
         if (k.Key == "shift_tab") { await Control.PressAsync(host, [Control.Shift], 0x09, "Shift+Tab", "Pressed Shift+Tab"); return; }
         if (k.Key != "enter") { await Control.PressAsync(host, [], k.Vk, k.Label, $"Pressed {k.Label}"); return; }
 
-        // Enter sends a message in mail and chat apps and submits forms on web pages: ask, except in a plain editor.
-        if (Control.PlainEditors.Contains(host.App.Process))
+        // Enter sends a message in mail and chat apps and submits forms on web pages: ask, except in a plain editor's text.
+        if (await Control.EnterIsSafeAsync(host.App.Process))
         {
             if (await hf.PressChordAsync([], 0x0D, "Enter", enterIsSafe: true)) host.Flash("Pressed Enter");
             else host.Flash(await Control.WhyNotAsync(hf), error: true);
@@ -249,8 +291,11 @@ public sealed class PressKeyIntent : VoiceIntent
         string what = ScreenPrompts.IsChat(host.App) || SendTargets.For(host.App) != null
             ? $"In {app}, Enter may send what you have written. It cannot be taken back."
             : $"In {app}, Enter may send, submit or confirm something. It cannot be taken back.";
+        var spot = await Control.SpotAsync(host.Window, withFocus: true);
         await Confirmations.RequestAsync(host, $"Press Enter in {app}?", what, "Enter", async () =>
         {
+            // Enter goes only to the window and field the card was about.
+            if (!await Control.StillAsync(spot, checkTitle: false, checkFocus: true)) { host.Flash(Control.Changed); return; }
             if (await hf.PressAsync(0, 0x0D, "Enter")) host.Flash($"Pressed Enter in {app}");
             else host.Flash(await Control.WhyNotAsync(hf), error: true);
         });
@@ -264,7 +309,7 @@ public sealed class ScrollIntent : VoiceIntent
     public override string Id => "scroll";
     public override string Description => "Scroll the window in front. Argument direction: down, up, top, bottom, little_down or little_up.";
     public override IReadOnlyDictionary<string, string> Arguments { get; } = new Dictionary<string, string> { ["direction"] = "down, up, top, bottom, little_down or little_up" };
-    public override string[] Hints { get; } = ["scrol", "skrol", "rul", "toppen", "bunden", "top", "bottom"];
+    public override string[] Hints { get; } = ["scrol", "skrol", "rul", "toppen", "bunden", "top ", "bottom"];
     public override int Order => 110;
     public override bool Offer(IntentRequest r) => Control.On(r);
 
@@ -338,8 +383,13 @@ public sealed class SwitchAppIntent : VoiceIntent
     public override IntentMatch? Match(IntentRequest r)
     {
         if (!Control.On(r)) return null;
-        if (IntentRules.Lead(r.Normalized, @"(?:skift|skifte|switch|change) (?:over )?(?:til|to)") is { Length: > 0 } strong && Words(strong) <= 5)
+        // "Skift til engelsk" / "switch to past tense" with text selected rewrite it: an app only when the name is known.
+        if (IntentRules.Lead(r.Normalized, @"(?:skift|skifte|switch) (?:over )?(?:til|to)") is { Length: > 0 } strong && Words(strong) <= 5
+            && !(r.HasSelection && !OpenAppIntent.KnownName(strong)))
             return new IntentMatch(this, new() { ["app"] = strong });
+        // "Change to" is mostly a rewrite ("change to a more formal tone"): only with a known app name.
+        if (IntentRules.Lead(r.Normalized, @"change (?:over )?to") is { Length: > 0 } change && Words(change) <= 4 && OpenAppIntent.KnownName(change))
+            return new IntentMatch(this, new() { ["app"] = change });
         // "Gå til" / "go to" are said about many things: only when the rest is the name of a known app.
         if (IntentRules.Lead(r.Normalized, @"(?:gå|hop|spring|go|jump|bring up|fokus på|focus on) (?:over )?(?:til|to)?") is { Length: > 0 } weak && Words(weak) <= 4 && OpenAppIntent.KnownName(weak))
             return new IntentMatch(this, new() { ["app"] = weak });
@@ -358,7 +408,7 @@ public sealed class OpenAppIntent : VoiceIntent
     public override string Id => "open_app";
     public override string Description => "Open or start an installed app by its name (\"åbn Slack\", \"open Spotify\"); brings it to the front when already open. Argument app: the app's name as said.";
     public override IReadOnlyDictionary<string, string> Arguments { get; } = new Dictionary<string, string> { ["app"] = "the app's name, as said" };
-    public override string[] Hints { get; } = ["åbn", "open", "start", "launch"];
+    public override string[] Hints { get; } = ["åbn", "open", "start ", "starte ", "launch"];
     public override int Order => 120;
     public override bool Offer(IntentRequest r) => Control.On(r);
 
@@ -462,7 +512,10 @@ public sealed class ClickIntent : VoiceIntent
         host.ShowBusy($"Looking for “{target}” in {app}…");
         var all = await UiControl.ClickablesAsync(host.Window);
         if (all == null) { host.Flash($"{app} did not answer in time.", error: true); return; }
-        var best = UiControl.Best(target, all);
+        // The app's own buttons first: a link with that name inside the message or page (written by whoever sent it) is
+        // only a candidate when the app has no such button.
+        var best = UiControl.Best(target, all.Where(c => !c.InDocument));
+        if (best.Count == 0) best = UiControl.Best(target, all);
         LastFound = best;
         if (best.Count == 0) { host.Flash($"No button or link called “{target}” in {app}.", error: true); return; }
 
@@ -471,11 +524,19 @@ public sealed class ClickIntent : VoiceIntent
         if (pickIndex is not { } i) return;
         var pick = best[i];
 
-        // Never on its own: anything named send, submit, delete, buy, pay or close asks first.
-        if (Confirmations.IsRisky(pick.Name))
+        // Never on its own: anything named send, submit, delete, buy, pay or close asks first, and so does a link inside the
+        // message or page whose name is not exactly what was said.
+        if (Confirmations.IsRisky(pick.Name, pick.InDialog))
         {
             await Confirmations.RequestAsync(host, $"Click “{Short(pick.Name)}”?",
                 $"Clicks “{Short(pick.Name)}” in {app}. It may send, delete, buy or close something, and that cannot be taken back.", "Click",
+                () => ClickNowAsync(host, pick, app));
+            return;
+        }
+        if (pick.InDocument && pick.Kind == "Hyperlink" && UiControl.Score(target, pick.Name) < 0.96)
+        {
+            await Confirmations.RequestAsync(host, $"Open the link “{Short(pick.Name)}”?",
+                $"“{Short(pick.Name)}” is a link inside the page or message in {app}, not one of {app}'s own buttons. Opening it goes wherever the link points.", "Click",
                 () => ClickNowAsync(host, pick, app));
             return;
         }

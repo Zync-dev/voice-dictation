@@ -116,8 +116,13 @@ public sealed class ReadAloudIntent : VoiceIntent
             text = content.Main.Trim().Length > 0 ? content.Main : content.Text;
             from = ScreenReader.Pretty(content.App) + (content.Source == "ocr" ? " (from the picture)" : "");
         }
-        await reader.ReadAsync(text, from);
+        // Not awaited: reading can take minutes, and command mode must be free meanwhile, so "stop", "læs langsommere" or
+        // "fortsæt" (and the recording that pauses reading) can come in. ReadAsync shows its own errors on the card.
+        LastReading = reader.ReadAsync(text, from).ContinueWith(t => Log.Write("Read aloud: " + t.Exception?.GetBaseException().Message), TaskContinuationOptions.OnlyOnFaulted);
     }
+
+    /// <summary>For the developer checks: the reading the latest command started.</summary>
+    internal static Task LastReading = Task.CompletedTask;
 }
 
 /// <summary>While reading aloud: "stop", "læs langsommere", "read faster", "fortsæt". "Stop reading" is always understood.</summary>

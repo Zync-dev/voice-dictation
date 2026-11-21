@@ -11,7 +11,8 @@ namespace Murmur;
 //   int? n = await Confirmations.ChooseAsync(run.Host, "Which “Export”?", ["Export (Report)", "Export (Data)"]);
 //
 // The card shows the question, exactly what will happen, how to answer, a keycap named after the action and Esc. Yes is a
-// click on that keycap or, in command mode, "send", "ja", "bekræft", "yes", "confirm" as the whole phrase (ConfirmIntent).
+// click on that keycap or, in command mode, "ja", "bekræft", "yes", "confirm" (or the card's own verb: "send" only for
+// Send, "kør" only for Run, "luk" only for Close) as the whole phrase, also strung together ("ja, send den") (ConfirmIntent).
 // "Annuller", "nej", "cancel", Esc, the timeout (Settings › Computer control, 20 s), any other command or a dictation
 // mean no. "Igen" / "again" shows the waiting question once more; with nothing waiting it runs the latest command again.
 // A yes only ever comes from the user: the AI router can only say no (ConfirmIntent), and nothing read from the screen
@@ -68,11 +69,25 @@ public static class Confirmations
     /// Names of buttons and links that send, submit, post, delete, buy, pay or close (Danish and English). Clicking one
     /// always asks first.
     /// </summary>
-    public static bool IsRisky(string name) => RiskyRegex.IsMatch(IntentRules.Normalize(name));
+    public static bool IsRisky(string name) => IsRisky(name, inDialog: false);
 
+    /// <summary>
+    /// As <see cref="IsRisky(string)"/>; inside a dialog a bare "Yes", "Ja" or "OK" is risky too: it is the answer to
+    /// "Are you sure you want to delete …?".
+    /// </summary>
+    public static bool IsRisky(string name, bool inDialog)
+    {
+        string n = IntentRules.Normalize(name);
+        return RiskyRegex.IsMatch(n) || (inDialog && DialogYesRegex.IsMatch(n));
+    }
+
+    // Words that act on their own and cannot be taken back. "Un…"/"af…" words are listed whole: the lookbehind keeps
+    // "subscribe" from matching inside "unsubscribe", so each one is named.
     private static readonly Regex RiskyRegex = new(
-        @"(?<![\p{L}])(?:send\w*|afsend\w*|indsend\w*|submit\w*|post|poste|publish\w*|udgiv\w*|offentligg\w*|share|del|delete\w*|slet\w*|remove\w*|fjern\w*|discard\w*|kassér\w*|kasser\w*|trash|papirkurv\w*|empty|tøm\w*|erase|wipe|ryd\w*|buy\w*|køb\w*|purchase\w*|pay\w*|betal\w*|checkout|check out|order\w*|bestil\w*|subscribe\w*|abonner\w*|donate|donér|doner|close\w*|luk\w*|quit|exit|afslut\w*|sign out|log out|log ud|log af|logout|uninstall\w*|afinstaller\w*|reset|nulstil\w*|format\w*|overwrite|overskriv\w*|transfer\w*|overfør\w*|accept\w*|godkend\w*|approve\w*|confirm\w*|bekræft\w*|forward|videresend\w*|reply all|svar alle)(?![\p{L}])",
+        @"(?<![\p{L}])(?:send\w*|afsend\w*|indsend\w*|unsend\w*|submit\w*|post|poste|publish\w*|udgiv\w*|offentligg\w*|share|del|delete\w*|slet\w*|remove\w*|fjern\w*|discard\w*|kassér\w*|kasser\w*|trash|papirkurv\w*|empty|tøm\w*|erase|wipe|ryd\w*|buy\w*|køb\w*|purchase\w*|pay\w*|betal\w*|checkout|check out|order\w*|bestil\w*|subscribe\w*|unsubscribe\w*|abonner\w*|afmeld\w*|frameld\w*|opsig\w*|cancel\w*|annuller\w*|annullér\w*|donate|donér|doner|close\w*|luk\w*|quit|exit|afslut\w*|sign out|log out|log ud|log af|logout|uninstall\w*|afinstaller\w*|install\w*|installer\w*|installér\w*|reset|nulstil\w*|format\w*|overwrite|overskriv\w*|replace\w*|erstat\w*|transfer\w*|overfør\w*|accept\w*|godkend\w*|approve\w*|confirm\w*|bekræft\w*|allow\w*|tillad\w*|decline\w*|reject\w*|afvis\w*|block\w*|bloker\w*|blokér\w*|unblock\w*|report\w*|rapportér\w*|rapporter\w*|anmeld\w*|spam|leave\w*|forlad\w*|deactivat\w*|deaktiv\w*|terminat\w*|run|run anyway|kør|kør alligevel|don t save|dont save|do not save|gem ikke|ikke gem|forward|videresend\w*|reply all|svar alle)(?![\p{L}])",
         RegexOptions.CultureInvariant);
+
+    private static readonly Regex DialogYesRegex = new(@"^(?:yes|ja|jo|ok|okay|yes to all|ja til alle|y)$", RegexOptions.CultureInvariant);
 
     // ---------- spoken numbers ----------
 
@@ -104,6 +119,9 @@ public static class Confirmations
         // The option itself: the whole name, or a word that only one option has ("data" for "Export (Data)").
         string Clean(string o) => IntentRules.Normalize(o);
         for (int i = 0; i < options.Count; i++) if (Clean(options[i]) == n) return i + 1;
+        // "Annuller", "nej", "stop", "fortryd" dismiss the card: never a pick, even when an option has that word
+        // ("Annuller abonnement"). Only the option's whole name picks it.
+        if (ConfirmIntent.IsNo(normalized) || ConfirmIntent.IsNo(n) || TaskStopIntent.IsStop(normalized)) return 0;
         if (n.Length >= 3)
         {
             var hits = Enumerable.Range(0, options.Count).Where(i => IntentRules.Has(Clean(options[i]), Regex.Escape(n))).ToList();
@@ -131,7 +149,7 @@ public sealed class ChoiceIntent : VoiceIntent, IConfirmationAnswer
         int n = Confirmations.ParseChoice(r.Normalized, options);
         if (n > 0) return new IntentMatch(this, new() { ["number"] = n.ToString() });
         // "ja" to a "which one?" says nothing about which: ask again instead of guessing.
-        if (IntentRules.Compiled($@"^(?:{Yes})(?:\s+(?:tak|please|den|det|it))*$").IsMatch(r.Normalized)) return new IntentMatch(this, new() { ["number"] = "0" });
+        if (IntentRules.Compiled($@"^(?:{Yes})(?:\s+(?:{Yes}|tak|please|den|det|it|bare|just))*$").IsMatch(r.Normalized)) return new IntentMatch(this, new() { ["number"] = "0" });
         return null;
     }
 
@@ -260,6 +278,7 @@ public sealed class SendReplyIntent : VoiceIntent
         if (field == null || field.ProcessId != reply.ProcessId) return (false, $"The reply field in {name} does not have focus.");
         if (field.Password) return (false, "The focused field is a password field.");
         if (!field.Editable) return (false, $"The reply field in {name} does not have focus.");
+        if (ReplyTargets.IsBrowser(new ActiveWindowInfo(reply.Process, reply.Title)) && !field.InWebDocument) return (false, $"The focus is in {name}'s own bar, not the reply field.");
         if (!ContainsDraft(field.Text, reply.Text)) return (false, "The draft is no longer in the focused field.");
         return (true, "");
     }

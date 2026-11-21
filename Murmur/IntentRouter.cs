@@ -72,6 +72,8 @@ public sealed class IntentRequest
     public string? PendingConfirmation { get; init; }
     /// <summary>Computer control: the numbered choices the waiting card offers ("1 Export (Report)", ...), or null.</summary>
     public IReadOnlyList<string>? PendingChoices { get; init; }
+    /// <summary>The waiting question's verb, its keycap ("Send", "Close", "Run", "Delete"), or null. "send" answers only Send.</summary>
+    public string? PendingVerb { get; init; }
 
     public static IntentRequest From(string spoken, string selection, string? language, ActiveWindowInfo app, AppSettings settings) => new()
     {
@@ -110,7 +112,10 @@ public abstract class VoiceIntent
     public abstract string Description { get; }
     /// <summary>Argument name → what it holds, for the AI router. Values arrive as strings in IntentMatch.Arguments.</summary>
     public virtual IReadOnlyDictionary<string, string> Arguments { get; } = new Dictionary<string, string>();
-    /// <summary>Lowercase word stems that make it worth asking the AI router when no rule matched ("mail", "svar").</summary>
+    /// <summary>
+    /// Lowercase word stems that make it worth asking the AI router when no rule matched ("svar", "opsum"). Matched at the
+    /// start of a word; end a hint with a space to match only the whole word ("tab ").
+    /// </summary>
     public virtual string[] Hints { get; } = [];
     /// <summary>Rule-layer order: lower is tried first. Built-ins: confirm 10, reply 40, todo 50, summarize 60, question 80.</summary>
     public virtual int Order => 100;
@@ -227,7 +232,18 @@ public static class IntentRouter
 
     /// <summary>True when the AI router is worth one call for this phrase: some offered intent lists a word of it in Hints.</summary>
     public static bool WorthAsking(IntentRequest request) =>
-        Intents.Any(i => i.Offer(request) && i.Hints.Any(h => request.Normalized.Contains(h, StringComparison.Ordinal)));
+        Intents.Any(i => i.Offer(request) && i.Hints.Any(h => HintIn(request.Normalized, h)));
+
+    /// <summary>
+    /// A hint is a word stem matched at the start of a word ("opsum" in "opsummer", never "tab" inside "tabel"); a hint
+    /// that ends in a space is a whole word ("start " matches "start", not "starter").
+    /// </summary>
+    internal static bool HintIn(string normalized, string hint)
+    {
+        bool whole = hint.EndsWith(' ');
+        string h = Regex.Escape(hint.Trim());
+        return IntentRules.Compiled(@"(?<![\p{L}\p{N}])" + h + (whole ? @"(?![\p{L}\p{N}])" : "")).IsMatch(normalized);
+    }
 
     /// <summary>
     /// The intent for a phrase: rules, then (when allowed and worth it) one AI call, else null = command mode as before.
@@ -280,10 +296,18 @@ public static class IntentRouter
         return sb.ToString();
     }
 
+    /// <summary>The router's user message: the instruction, the app in front ("unknown" when it is excluded) and whether text is selected.</summary>
+    internal static string RouterUserPrompt(IntentRequest request)
+    {
+        // An excluded app's name never leaves the computer, not even as "the app in front".
+        string front = ScreenReader.IsExcluded(request.App.Process, request.Settings) ? "unknown" : request.App.Process;
+        return $"<instruction>{request.Spoken}</instruction>\nApp in front: {front}\nText selected: {(request.HasSelection ? "yes" : "no")}";
+    }
+
     private static async Task<IntentMatch?> AskAiAsync(IntentRequest request, CancellationToken ct)
     {
         var offered = Intents.Where(i => i.Offer(request)).ToList();
-        string user = $"<instruction>{request.Spoken}</instruction>\nApp in front: {request.App.Process}\nText selected: {(request.HasSelection ? "yes" : "no")}";
+        string user = RouterUserPrompt(request);
         string answer = await AiCall.ChatAsync(request.Settings, RouterPrompt(offered), user, json: true, ct: ct, maxSeconds: 12);
         var node = AiCall.ParseJson(answer);
         string id = node?["intent"]?.GetValue<string>()?.Trim() ?? "rewrite";
@@ -344,7 +368,7 @@ public static partial class IntentRules
     private static partial Regex PunctuationRegex();
     [GeneratedRegex(@"\s{2,}")]
     private static partial Regex SpacesRegex();
-    [GeneratedRegex(@"^(?:okay|ok|øh|øhm|um|uh|hey|hej|hi|murmur|så|so|og|and|lige|just|please|venligst|kan du|vil du|kunne du|gider du|can you|could you|would you|will you|i want you to|jeg vil have at du|jeg vil gerne have at du|du må gerne|kan du ikke)(?=\s|$)", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^(?:okay|ok|øh|øhm|um|uh|hey|hej|hi|murmur|så|so|og|and|lige|just|please|venligst|kan du ikke|kunne du ikke|vil du ikke|gider du ikke|kan du|vil du|kunne du|gider du|can you|could you|would you|will you|i want you to|jeg vil have at du|jeg vil gerne have at du|du må gerne)(?=\s|$)", RegexOptions.CultureInvariant)]
     private static partial Regex OpenerRegex();
     [GeneratedRegex(@"(?:\s|^)(?:please|venligst)$", RegexOptions.CultureInvariant)]
     private static partial Regex CloserRegex();
