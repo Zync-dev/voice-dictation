@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Text.RegularExpressions;
 using Anthropic;
 using Anthropic.Exceptions;
@@ -74,6 +75,8 @@ public sealed partial class AnthropicAdapter : IAiAdapter
         Message response;
         try { response = await client.Messages.Create(BuildParams(target, request), ct); }
         catch (AnthropicApiException ex) { throw Mapped(ex); }
+        catch (AnthropicIOException ex) { throw Unreachable(ex); }
+        catch (AnthropicException ex) { throw new InvalidOperationException("Anthropic sent an answer Murmur could not read: " + ex.Message, ex); }
 
         string text = string.Concat(response.Content.Select(b => b.Value).OfType<TextBlock>().Select(t => t.Text)).Trim();
         if (response.StopReason == StopReason.Refusal)
@@ -92,16 +95,27 @@ public sealed partial class AnthropicAdapter : IAiAdapter
             return page.Items.Select(m => m.ID).ToList();
         }
         catch (AnthropicApiException ex) { throw Mapped(ex); }
+        catch (AnthropicIOException ex) { throw Unreachable(ex); }
+        catch (AnthropicException ex) { throw new InvalidOperationException("Anthropic sent a model list Murmur could not read: " + ex.Message, ex); }
     }
 
     /// <summary>The same "API error 401: ..." shape the OpenAI-compatible adapter throws, so callers and AiService.Friendly treat both alike.</summary>
     private static InvalidOperationException Mapped(AnthropicApiException ex)
     {
         int code = (int)ex.StatusCode;
-        string detail = ex.Message;
+        // ApiMessage is the API's own error text; Message adds "Status Code: ..." and the raw JSON body.
+        string detail = string.IsNullOrWhiteSpace(ex.ApiMessage) ? ex.Message : ex.ApiMessage;
         if (detail.Length > 200) detail = detail[..200];
         return new InvalidOperationException($"API error {code}: {detail}", ex);
     }
+
+    /// <summary>
+    /// A network failure (offline, DNS, a proxy or firewall): the SDK wraps the HttpRequestException in an AnthropicIOException,
+    /// which callers would not recognise, so it goes back out as the HttpRequestException ("Could not reach Anthropic").
+    /// A timeout through the caller's token stays an OperationCanceledException.
+    /// </summary>
+    private static HttpRequestException Unreachable(AnthropicIOException ex) =>
+        new(ex.InnerException?.Message ?? ex.Message, ex);
 
     [GeneratedRegex(@"^claude-(?:opus|sonnet|haiku|fable|mythos)-(\d+)")]
     private static partial Regex ModelVersion();

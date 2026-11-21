@@ -162,10 +162,12 @@
                     <Button x:Name="TestButton" Grid.Column="1" Margin="8,0,0,0" Padding="14,0" Content="Test" Click="Test_Click" AutomationProperties.Name="Test the key"/>
                 </Grid>
             </Grid>
-            <StackPanel x:Name="KeyStatus" Orientation="Horizontal" Margin="0,-8,0,12">
-                <ContentControl x:Name="KeyTag" Style="{StaticResource Tag}" Margin="0,0,8,0"/>
-                <TextBlock x:Name="KeyMessage" Style="{StaticResource Caption}" VerticalAlignment="Center" MaxWidth="560"/>
-            </StackPanel>
+            <!-- A grid, not a horizontal StackPanel: the message must wrap within the card at the minimum window width. -->
+            <Grid x:Name="KeyStatus" Margin="0,-8,0,12">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <ContentControl x:Name="KeyTag" Style="{StaticResource Tag}" Margin="0,0,8,0" VerticalAlignment="Top"/>
+                <TextBlock x:Name="KeyMessage" Grid.Column="1" Style="{StaticResource Caption}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+            </Grid>
             <TextBlock x:Name="KeyWarning" Style="{StaticResource Caption}" Margin="0,-8,0,12"/>
             <Border Style="{StaticResource PanelLine}"/>
 

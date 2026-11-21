@@ -139,7 +139,8 @@ public partial class OnboardingWindow : Window
         BackButton.Visibility = step == Step.Welcome ? Visibility.Collapsed : Visibility.Visible;
         SkipButton.Visibility = step == Step.Done ? Visibility.Collapsed : Visibility.Visible;
         // AI providers: on the AI step, skipping means going on without AI, not leaving the setup.
-        SkipButton.Content = step == Step.Ai ? "Use Murmur without AI" : "Skip setup";
+        // "Run setup again" with AI already working: skipping keeps it as it is.
+        SkipButton.Content = step != Step.Ai ? "Skip setup" : AiConfig.IsConfigured(S) ? "Keep my AI setup" : "Use Murmur without AI";
         NextButton.Content = step switch
         {
             Step.Welcome => "Get started",
@@ -185,7 +186,9 @@ public partial class OnboardingWindow : Window
     {
         if (_step == Step.Ai)
         {
-            S.AiProvider = AiProviders.NoneId; // "Use Murmur without AI"; any key typed is kept for later
+            // "Use Murmur without AI"; any key typed is kept for later. With AI already set up the button reads
+            // "Keep my AI setup" and leaves it alone.
+            if (!AiConfig.IsConfigured(S)) S.AiProvider = AiProviders.NoneId;
             S.Save();
             ShowStep(Step.Done);
             return;

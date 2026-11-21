@@ -40,7 +40,14 @@ public static class Http
         if (!response.IsSuccessStatusCode)
         {
             string detail = body;
-            try { detail = JsonNode.Parse(body)?["error"]?["message"]?.GetValue<string>() ?? body; } catch { }
+            try
+            {
+                // Gemini's OpenAI-compatible endpoint wraps its error in an array: [{"error":{...}}].
+                var n = JsonNode.Parse(body);
+                if (n is JsonArray { Count: > 0 } a) n = a[0];
+                detail = n?["error"]?["message"]?.GetValue<string>() ?? body;
+            }
+            catch { }
             if (detail.Length > 200) detail = detail[..200];
             throw new InvalidOperationException($"API error {(int)response.StatusCode}: {detail}");
         }

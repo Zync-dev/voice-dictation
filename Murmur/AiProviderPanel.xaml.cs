@@ -86,14 +86,12 @@ public partial class AiProviderPanel : UserControl
         var current = AiConfig.Provider(s);
         OffRow.Visibility = setupMode ? Visibility.Collapsed : Visibility.Visible;
         UseAiBox.IsChecked = current != null;
-        OffHelp.Text = current != null
-            ? "AI polish, command mode, Ask, tone styles and the hands-free commands use it."
-            : "Off. Command mode, Ask, tone styles and the hands-free commands need one.";
         Body.Visibility = setupMode || current != null ? Visibility.Visible : Visibility.Collapsed;
         _shown = current ?? FirstWithKey(s) ?? AiProviders.Groq;
         _cards[_shown.Id].IsChecked = true;
         _loading = false;
         Show(_shown);
+        RefreshInUse();
     }
 
     /// <summary>Refreshes the key box (a key typed in the speech settings is the same key).</summary>
@@ -120,11 +118,49 @@ public partial class AiProviderPanel : UserControl
     {
         if (_s == null) return false;
         SaveFields();
-        var target = new AiTarget(_shown, AiConfig.BaseUrl(_s, _shown), AiConfig.Model(_s, _shown), AiConfig.Key(_s, _shown.Id));
-        _s.AiProvider = AiConfig.Usable(target) ? _shown.Id : AiProviders.NoneId;
+        var current = AiConfig.Provider(_s);
+        if (AiConfig.Usable(TargetFor(_shown))) _s.AiProvider = _shown.Id;
+        // "Run setup again": looking at another card without a key must not turn off a setup that works.
+        else if (current == null || !AiConfig.Usable(TargetFor(current))) _s.AiProvider = AiProviders.NoneId;
         _s.Save();
         return _s.AiProvider != AiProviders.NoneId;
     }
+
+    /// <summary>A provider's target from the saved settings (its own key, address and model).</summary>
+    private AiTarget TargetFor(AiProvider p) => new(p, AiConfig.BaseUrl(_s!, p), AiConfig.Model(_s!, p), AiConfig.Key(_s!, p.Id));
+
+    /// <summary>
+    /// Settings: the shown provider becomes the one in use once it can be used (a key, or a local address). Until then a
+    /// provider that works stays in use, so clicking a card to read its guide does not quietly switch AI off.
+    /// </summary>
+    private void AdoptShown()
+    {
+        if (_s == null || _setupMode || UseAiBox.IsChecked != true) return;
+        if (_s.AiProvider != _shown.Id)
+        {
+            var current = AiConfig.Provider(_s);
+            if (AiConfig.Usable(TargetFor(_shown)) || current == null || !AiConfig.Usable(TargetFor(current)))
+            {
+                _s.AiProvider = _shown.Id;
+                _s.Save();
+            }
+        }
+        RefreshInUse();
+    }
+
+    /// <summary>The line under the switch: what uses AI, or which provider is still in use while the shown one has no key.</summary>
+    private void RefreshInUse()
+    {
+        if (_s == null || _setupMode) return;
+        var current = AiConfig.Provider(_s);
+        OffHelp.Text = current == null
+            ? "Off. Command mode, Ask, tone styles and the hands-free commands need one."
+            : current.Id != _shown.Id
+                ? $"Murmur still uses {AiService.NameOf(TargetFor(current))}. {_shown.Name} takes over once its {(_shown.IsCustom ? "address and model are" : "key is")} in."
+                : "AI polish, command mode, Ask, tone styles and the hands-free commands use it.";
+    }
+
+
 
     // ---------- showing a provider ----------
 
@@ -143,9 +179,9 @@ public partial class AiProviderPanel : UserControl
         NoteText.Visibility = p.Note.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         PrivacyText.Text = p.Privacy;
         AddressRow.Visibility = p.IsCustom ? Visibility.Visible : Visibility.Collapsed;
-        // An address left over from before providers that belongs to a listed provider (the old Groq default) is not a custom one.
-        AddressBox.Text = AiProviders.All.Any(o => !o.IsCustom && o.BaseUrl.TrimEnd('/') == _s.LlmBaseUrl.Trim().TrimEnd('/')) && _s.AiProvider != AiProviders.CustomId
-            ? "" : _s.LlmBaseUrl;
+        // The old Groq default left over from before providers is not a custom address (AiConfig.BaseUrl drops it), whatever
+        // provider is in use, so a Custom key is never sent to Groq by a prefilled box.
+        AddressBox.Text = AiConfig.BaseUrl(_s, AiProviders.Custom);
         KeyHelp.Text = p.IsCustom ? "Not needed for a local address. Stored encrypted for your Windows account." : "Stored encrypted for your Windows account.";
         KeyBox.Password = AiConfig.Key(_s, p.Id);
         _lastFetchedKey = "";
@@ -190,12 +226,10 @@ public partial class AiProviderPanel : UserControl
     {
         if (_loading || _s == null || sender is not RadioButton { Tag: AiProvider p }) return;
         SaveFields();
-        if (!_setupMode)
-        {
-            _s.AiProvider = p.Id;
-            _s.Save();
-        }
+        _s.Save();
         Show(p);
+        AdoptShown();
+        if (!_setupMode && UseAiBox.IsChecked == true && _s.AiProvider != p.Id) SetKeyStatus(null, OffHelp.Text);
         Changed?.Invoke();
     }
 
@@ -203,7 +237,7 @@ public partial class AiProviderPanel : UserControl
     {
         if (_s == null) return;
         bool on = UseAiBox.IsChecked == true;
-        _s.AiProvider = on ? _shown.Id : AiProviders.NoneId;
+        _s.AiProvider = on ? _shown.Id : AiProviders.NoneId; // AI was off, so nothing that works is replaced
         _s.Save();
         Load(_s);
         Changed?.Invoke();
@@ -234,6 +268,9 @@ public partial class AiProviderPanel : UserControl
     private void RefreshKeyWarning()
     {
         string? warning = AiProviders.KeyWarning(_shown, KeyBox.Password);
+        // Custom over plain http:// to another machine: the key and the text travel unencrypted.
+        if (_shown.IsCustom && AiConfig.InsecureAddressWarning(AddressBox.Text) is { } plain)
+            warning = warning == null ? plain : warning + " " + plain;
         KeyWarning.Text = warning ?? "";
         KeyWarning.Visibility = warning == null ? Visibility.Collapsed : Visibility.Visible;
     }
@@ -246,6 +283,7 @@ public partial class AiProviderPanel : UserControl
         _s.Save();
         string key = KeyBox.Password.Trim();
         if (key == before) return;
+        AdoptShown();
         Changed?.Invoke();
         // A new key: load the models it can use, quietly.
         if (key.Length > 0 && !_shown.IsCustom && AiProviders.KeyWarning(_shown, key) == null) await LoadModelsAsync(quiet: true);
@@ -256,6 +294,9 @@ public partial class AiProviderPanel : UserControl
         if (_loading || _s == null) return;
         SaveFields();
         _s.Save();
+        RefreshKeyWarning();
+        AdoptShown();
+        Changed?.Invoke();
     }
 
     private void CustomModel_LostFocus(object sender, RoutedEventArgs e)
@@ -263,6 +304,7 @@ public partial class AiProviderPanel : UserControl
         if (_loading || _s == null) return;
         SaveFields();
         _s.Save();
+        AdoptShown();
         Changed?.Invoke();
     }
 
@@ -272,6 +314,7 @@ public partial class AiProviderPanel : UserControl
         _s.AiModels[_shown.Id] = choice.Id;
         _s.Save();
         ShowModelNote();
+        AdoptShown();
         Changed?.Invoke();
     }
 
@@ -292,20 +335,30 @@ public partial class AiProviderPanel : UserControl
         if (!AiConfig.Usable(target))
         {
             SetKeyStatus("TagDanger", target.BaseUrl.Length == 0 ? "Type the API address first." :
-                target.Model.Length == 0 ? "Type the model name first." : $"Paste your {target.Provider.Name} key first.");
+                target.Model.Length == 0 ? "Type the model name first." :
+                target.Provider.IsCustom ? "Paste the key for this address first." : $"Paste your {target.Provider.Name} key first.");
             return;
         }
         _work?.Cancel();
         var work = _work = new CancellationTokenSource();
         TestButton.IsEnabled = false;
-        SetKeyStatus("TagThink", $"Asking {target.Provider.Name}…");
+        SetKeyStatus("TagThink", $"Asking {AiService.NameOf(target)}…");
         var watch = Stopwatch.StartNew();
-        string? problem = await AiService.TestAsync(target, work.Token);
-        TestButton.IsEnabled = true;
+        string? problem;
+        // Always enable the button again: another card or the switch cancels the test, and there is only one button.
+        try { problem = await AiService.TestAsync(target, work.Token); }
+        catch (OperationCanceledException) { return; }
+        catch (Exception ex)
+        {
+            Log.Write("Test failed: " + ex);
+            problem = "The test did not work: " + ex.Message;
+        }
+        finally { TestButton.IsEnabled = true; }
         if (work.IsCancellationRequested || target.Provider != _shown) return;
         if (problem == null)
         {
-            SetKeyStatus("TagScript", $"{target.Provider.Name} answered with {target.Model} in {watch.Elapsed.TotalSeconds:0.0} s.");
+            SetKeyStatus("TagScript", $"{AiService.Cap(AiService.NameOf(target))} answered with {target.Model} in {watch.Elapsed.TotalSeconds:0.0} s.");
+            AdoptShown();
             Changed?.Invoke();
             await LoadModelsAsync(quiet: true);
         }
@@ -320,14 +373,14 @@ public partial class AiProviderPanel : UserControl
         var target = CurrentTarget();
         if (target.Key.Length == 0 && !(target.Provider.IsCustom && AiConfig.IsLocal(target.BaseUrl)))
         {
-            if (!quiet) ModelHelp.Text = $"Paste your {target.Provider.Name} key first. Until then this is Murmur's list.";
+            if (!quiet) ModelHelp.Text = target.Provider.IsCustom ? "Paste the key for this address first." : $"Paste your {target.Provider.Name} key first. Until then this is Murmur's list.";
             return;
         }
         if (target.BaseUrl.Length == 0) { if (!quiet) ModelHelp.Text = "Type the API address first."; return; }
         if (quiet && _lastFetchedKey == target.Provider.Id + target.Key) return;
         var work = _work = _work is { IsCancellationRequested: false } ? _work : new CancellationTokenSource();
         RefreshButton.IsEnabled = false;
-        ModelHelp.Text = $"Loading the models from {target.Provider.Name}…";
+        ModelHelp.Text = $"Loading the models from {AiService.NameOf(target)}…";
         try
         {
             var ids = await AiService.RefreshModelsAsync(_s, target, work.Token);
@@ -348,6 +401,11 @@ public partial class AiProviderPanel : UserControl
             ModelHelp.Text = "Could not load the list: " + AiService.Friendly(target, ex.Message);
         }
         catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            Log.Write("Loading the model list failed: " + ex);
+            if (target.Provider == _shown) ModelHelp.Text = "Could not load the list: " + ex.Message;
+        }
         finally { RefreshButton.IsEnabled = true; }
     }
 

@@ -62,7 +62,7 @@ public partial class MainWindow
         SttModelChoiceBox.ItemsSource = choices;
         SttModelChoiceBox.SelectedItem = choices.FirstOrDefault(c => c.Id == chosen) ?? choices.FirstOrDefault();
         SttServiceHelp.Text = custom
-            ? "Your audio goes to the address below."
+            ? CustomSttHelp(S.CloudSttBaseUrl)
             : $"Your audio goes to {p.Name}. " + (p.Id == AiProviders.MistralId ? "Mistral cannot translate speech without an AI model." : "");
         SttModelHelp.Text = custom ? "Type the name exactly as the service lists it." : SttNote(p, chosen);
         SttKeyPageButton.Visibility = custom ? Visibility.Collapsed : Visibility.Visible;
@@ -73,6 +73,10 @@ public partial class MainWindow
         _loading = false;
         LoadSttKey(p);
     }
+
+    /// <summary>Custom speech: where the audio goes, with a warning when the address is plain http:// to another machine.</summary>
+    private static string CustomSttHelp(string url) =>
+        "Your audio goes to the address below." + (AiConfig.InsecureAddressWarning(url) is { } w ? " " + w.Replace("your text", "your audio") : "");
 
     /// <summary>The model's note, with "Recommended." in front for the recommended one (the drop-down shows only names).</summary>
     private static string SttNote(AiProvider p, string id) => p.SttModels.FirstOrDefault(m => m.Id == id) is { } m
@@ -96,6 +100,7 @@ public partial class MainWindow
         {
             S.CloudSttBaseUrl = SttUrlBox.Text.Trim();
             S.CloudSttModel = SttModelBox.Text.Trim();
+            SttServiceHelp.Text = CustomSttHelp(S.CloudSttBaseUrl);
         }
         else if (SttModelChoiceBox.SelectedItem is SttChoice m) S.SttModels[p.Id] = m.Id;
     }

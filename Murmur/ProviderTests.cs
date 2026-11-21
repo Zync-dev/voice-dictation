@@ -114,9 +114,11 @@ public static class ProviderTests
         private static (int, string) Route(Recorded r)
         {
             string model = r.Json?["model"]?.GetValue<string>() ?? "";
+            if (r.Path.StartsWith("/wrongpath")) return (404, "404 page not found"); // Ollama without /v1
             if (r.Path.EndsWith("/v1/messages"))
             {
                 if (model == "error-401") return (401, """{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}""");
+                if (model == "error-400") return (400, """{"type":"error","error":{"type":"invalid_request_error","message":"temperature is not supported on this model"},"request_id":"req_1"}""");
                 if (model == "refuse") return (200, AnthropicMessage(model, "[]", "refusal"));
                 return (200, AnthropicMessage(model, """[{"type":"thinking","thinking":"","signature":"x"},{"type":"text","text":"OK"}]""", "end_turn"));
             }
@@ -126,6 +128,8 @@ public static class ProviderTests
             {
                 if (model == "nojson" && r.Json?["response_format"] != null) return (400, """{"error":{"message":"response_format is not supported"}}""");
                 if (model == "gemini-noeffort" && r.Json?["reasoning_effort"] != null) return (400, """{"error":{"message":"reasoning_effort 'minimal' is not supported by this model"}}""");
+                if (model == "gemini-badkey") return (400, """[{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}]""");
+                if (model == "html") return (200, "<html><body>Sign in to the Wi-Fi</body></html>");
                 if (model.StartsWith("error-")) return (int.Parse(model[6..]), """{"error":{"message":"Invalid API Key"}}""");
                 if (model == "mistral-parts")
                     return (200, """{"choices":[{"message":{"role":"assistant","content":[{"type":"thinking","thinking":[{"type":"text","text":"hmm"}]},{"type":"text","text":"OK"}]}}]}""");
@@ -172,8 +176,10 @@ public static class ProviderTests
         var r = m.Last;
         Check(lines, answer == "OK" && r.Path == "/groq/v1/chat/completions" && r.Header("Authorization") == "Bearer test-key",
             $"Groq: POST {r.Path}, bearer key, answer trimmed [{answer}]");
-        Check(lines, r.Json?["reasoning_effort"] == null && r.Json?["temperature"] == null && r.Json?["n"] == null && r.Json?["max_completion_tokens"] == null,
-            $"Groq gpt-oss plain call (polish): no reasoning_effort, temperature, n or token limit, as before ({r.Body.Length} bytes)");
+        Check(lines, r.Json?["reasoning_effort"]?.GetValue<string>() == "low" && r.Json?["temperature"] == null && r.Json?["n"] == null && r.Json?["max_completion_tokens"] == null,
+            $"Groq gpt-oss plain call (polish): reasoning_effort low (the recommended model must not think at medium), no temperature, n or token limit ({r.Body.Length} bytes)");
+        Check(lines, OpenAiCompatibleAdapter.ReasoningEffort(AiProviders.CustomId, "gpt-oss-120b", false) == null && OpenAiCompatibleAdapter.ReasoningEffort(AiProviders.CustomId, "gpt-oss-120b", true) == "low",
+            "Custom gpt-oss: as before providers (low only for the short hands-free calls)");
         Check(lines, r.Json?["messages"]?[0]?["role"]?.GetValue<string>() == "system" && r.Json?["messages"]?[1]?["content"]?.GetValue<string>() == "hej",
             "Groq: system and user messages");
         await AiService.ChatAsync(T(m, AiProviders.Groq, "openai/gpt-oss-120b"), new AiRequest("sys", "hej") { Fast = true, Json = true, MaxTokens = 50 });
@@ -282,6 +288,58 @@ public static class ProviderTests
         catch (InvalidOperationException ex) { Check(lines, ex.Message.Contains("declined"), $"Anthropic refusal: \"{ex.Message}\""); }
         string? anthropicProblem = await AiService.TestAsync(anthropic with { Model = "error-401" });
         Check(lines, anthropicProblem?.Contains("did not accept the key") == true, $"Anthropic 401 in plain words: \"{anthropicProblem}\"");
+        anthropicProblem = await AiService.TestAsync(anthropic with { Model = "error-400" });
+        Check(lines, anthropicProblem == "Anthropic turned the request down: temperature is not supported on this model",
+            $"Anthropic 400: the API's own message, not the SDK's status text and JSON: \"{anthropicProblem}\"");
+        // A closed port on this PC: the SDK throws AnthropicIOException, which must come out as "Could not reach".
+        var offline = anthropic with { BaseUrl = "http://127.0.0.1:9" };
+        anthropicProblem = await AiService.TestAsync(offline);
+        Check(lines, anthropicProblem?.StartsWith("Could not reach Anthropic") == true, $"Anthropic offline, Test button: \"{anthropicProblem}\"");
+        try { await AiService.RefreshModelsAsync(new AppSettings(), offline); Check(lines, false, "Anthropic offline model list throws"); }
+        catch (InvalidOperationException ex) { Check(lines, ex.Message.StartsWith("Could not reach Anthropic"), $"Anthropic offline, model list: \"{ex.Message}\""); }
+        using (var cancelled = new CancellationTokenSource())
+        {
+            cancelled.Cancel();
+            try { await AiService.TestAsync(anthropic, cancelled.Token); Check(lines, false, "A cancelled test throws"); }
+            catch (OperationCanceledException) { Check(lines, true, "A cancelled test (another card clicked) ends with OperationCanceledException, which the panel catches"); }
+        }
+
+        // ---- Gemini's errors come as an array; a bad Gemini key is a 400 ----
+        int before = m.Requests.Count;
+        string? geminiProblem = await AiService.TestAsync(T(m, AiProviders.Gemini, "gemini-badkey"));
+        Check(lines, geminiProblem?.Contains("did not accept the key") == true, $"Gemini bad key (400 in an array): \"{geminiProblem}\"");
+        before = m.Requests.Count;
+        try { await AiService.ChatAsync(T(m, AiProviders.Gemini, "gemini-badkey"), new AiRequest("s", "u") { Json = true }); }
+        catch (InvalidOperationException ex) { Check(lines, m.Requests.Count - before == 1 && ex.Message.Contains("API key not valid"), $"Gemini bad key, JSON call: one request, no retry without JSON mode ({m.Requests.Count - before}): {ex.Message}"); }
+
+        // ---- Custom: wrong path, an answer that is not JSON, names in messages, plain http ----
+        string? customProblem = await AiService.TestAsync(new AiTarget(AiProviders.Custom, m.Root + "/wrongpath", "llama3.2", ""));
+        Check(lines, customProblem?.StartsWith("Nothing answered at " + m.Root + "/wrongpath/chat/completions") == true, $"Custom 404 without the model named: the address, not the model: \"{customProblem}\"");
+        customProblem = await AiService.TestAsync(new AiTarget(AiProviders.Custom, m.Root + "/custom/v1", "html", ""));
+        Check(lines, customProblem?.Contains("not from an AI API") == true && !customProblem.Contains("Custom"), $"Custom answer that is not JSON (a Wi-Fi sign-in page): \"{customProblem}\"");
+        customProblem = await AiService.TestAsync(new AiTarget(AiProviders.Custom, m.Root + "/custom/v1", "error-401", "k"));
+        Check(lines, customProblem?.StartsWith("The service at localhost:") == true, $"Custom in messages: the host, not \"Custom\": \"{customProblem}\"");
+        Check(lines, AiConfig.InsecureAddressWarning("http://my-server:8000/v1") != null && AiConfig.InsecureAddressWarning("http://localhost:11434/v1") == null
+                     && AiConfig.InsecureAddressWarning("http://127.0.0.1:1234/v1") == null && AiConfig.InsecureAddressWarning("https://openrouter.ai/api/v1") == null,
+            "Plain http:// to another machine is warned about; https and this PC are not");
+        var leftover = new AppSettings { AiProvider = AiProviders.CustomId, LlmBaseUrl = "https://api.groq.com/openai/v1" };
+        Check(lines, AiConfig.BaseUrl(leftover, AiProviders.Custom) == "" && AiConfig.Target(leftover) == null,
+            "Custom never uses the old Groq default address (a Custom key is not sent to Groq)");
+
+        // ---- the vision model follows the provider ----
+        var vs = new AppSettings { AiProvider = AiProviders.GroqId, ScreenVisionModel = "qwen/qwen3.8-27b" };
+        AiConfig.SetKey(vs, AiProviders.GroqId, "gsk_x");
+        AiConfig.SetKey(vs, AiProviders.AnthropicId, "sk-ant-x");
+        string groqVision = AiConfig.VisionModel(vs);
+        vs.AiProvider = AiProviders.AnthropicId;
+        string anthropicVision = AiConfig.VisionModel(vs);
+        vs.AiProvider = AiProviders.GroqId;
+        vs.ScreenVisionModel = "";
+        string groqEmpty = AiConfig.VisionModel(vs);
+        vs.AiProvider = AiProviders.OpenAiId;
+        string openAiEmpty = AiConfig.VisionModel(vs);
+        Check(lines, groqVision == "qwen/qwen3.8-27b" && anthropicVision == "claude-opus-5-5" && groqEmpty == "" && openAiEmpty == "gpt-6-luna",
+            $"Vision model per provider: Groq {groqVision}; after a switch to Anthropic {anthropicVision} (not the Groq model); empty on Groq: none; empty on OpenAI: the chat model {openAiEmpty}");
 
         // ---- model lists ----
         var s = new AppSettings { AiProvider = AiProviders.GroqId };
@@ -405,6 +463,11 @@ public static class ProviderTests
         var none = Old($$"""{"LlmBaseUrl":"https://api.groq.com/openai/v1","LlmModel":"llama-3.3-70b-versatile","LlmKeyProtected":"","CloudSttBaseUrl":"https://api.groq.com/openai/v1","CloudSttKeyProtected":"{{sttKey}}"}""");
         Check(lines, none.AiProvider == "none" && !AiConfig.IsConfigured(none) && AiConfig.Key(none, "groq") == "gsk_speech" && CloudStt.Resolve(none).Key == "gsk_speech",
             "Old setup with only a Groq speech key: AI stays off, the speech key becomes the Groq key");
+        none.AiProvider = AiProviders.GroqId;
+        Check(lines, !none.AiModels.ContainsKey("groq") && AiConfig.Target(none)?.Model == "openai/gpt-oss-120b",
+            $"  ... the untouched old default model is not saved as a choice, so turning AI on gives the recommended model ({AiConfig.Target(none)?.Model})");
+        var typedModel = Old("""{"LlmBaseUrl":"https://api.groq.com/openai/v1","LlmModel":"openai/gpt-oss-20b","LlmKeyProtected":""}""");
+        Check(lines, typedModel.AiModels.GetValueOrDefault("groq") == "openai/gpt-oss-20b", "Old setup without a key but with a model the user picked: the model is kept");
 
         var otherStt = Old("""{"CloudSttBaseUrl":"https://api.openai.com/v1","CloudSttModel":"whisper-1","CloudSttKeyProtected":"x"}""");
         var ost = CloudStt.Resolve(otherStt);

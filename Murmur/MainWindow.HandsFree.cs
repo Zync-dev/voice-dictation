@@ -29,14 +29,22 @@ public partial class MainWindow
             });
     }
 
-    /// <summary>AI providers: name a model of the chosen provider that reads pictures.</summary>
+    /// <summary>AI providers: which model reads the picture with the provider in use (a name typed for another provider is not used).</summary>
     private void RefreshVisionHelp()
     {
         var p = AiConfig.Provider(S);
+        string used = AiConfig.VisionModel(S);
+        string typed = S.ScreenVisionModel.Trim();
         var vision = p?.Models.FirstOrDefault(m => m.Vision);
-        ScreenVisionModelHelp.Text = vision != null
-            ? $"Empty means none. With {p!.Name}, {vision.Id} reads pictures."
-            : "Empty means none. Check your provider’s current model list.";
+        ScreenVisionModelHelp.Text = p == null
+            ? "Needs an AI model (Settings › AI polish)."
+            : used.Length > 0
+                ? (typed.Length > 0 && !used.Equals(typed, StringComparison.OrdinalIgnoreCase)
+                    ? $"{p.Name} does not offer {typed}, so Murmur uses {used}."
+                    : typed.Length == 0 ? $"Empty uses your {p.Name} model, {used}, which reads pictures." : $"Murmur uses {used} with {p.Name}.")
+                : vision != null
+                    ? $"Empty means none. With {p.Name}, {vision.Id} reads pictures."
+                    : "Empty means none. Type a model of your provider that reads pictures.";
     }
 
     /// <summary>The rows below the main switch only matter when it is on; the model name only with the vision switch.</summary>
@@ -57,6 +65,7 @@ public partial class MainWindow
         S.ScreenVision = ScreenVisionBox.IsChecked == true;
         S.ScreenVisionModel = ScreenVisionModelBox.Text.Trim();
         RefreshHandsFreeRows();
+        RefreshVisionHelp();
         S.Save();
     }
 }
