@@ -73,7 +73,7 @@ public partial class TranscribePage : UserControl
         _refreshing = false;
 
         EngineText.Text = S.Engine == SttEngine.Cloud
-            ? $"Uses the cloud service from Settings ({S.CloudSttModel}). Your audio goes to it."
+            ? $"Uses the cloud service from Settings ({CloudStt.Provider(S).Name}, {CloudStt.ModelName(S)}). Your audio goes to it."
             : $"Runs on this PC with the {LocalModel.Get(S.LocalModel).Label.Split(" - ")[0]} speech model. Audio never leaves this PC.";
         SummarizeButton.Visibility = Processor.CanRewrite ? Visibility.Visible : Visibility.Collapsed;
     }

@@ -238,7 +238,7 @@ public partial class App
             if (engine == "local") settings.Engine = SttEngine.Local;
             if (engine == "cloud") settings.Engine = SttEngine.Cloud;
             string choice = Environment.GetEnvironmentVariable("MURMUR_FILE_LANGUAGE") ?? settings.FileTranscribeLanguage;
-            lines.Add($"engine={settings.Engine} languages={settings.Language}+{settings.SecondLanguage} choice={choice} local={settings.LocalModel} cloud={settings.CloudSttModel}");
+            lines.Add($"engine={settings.Engine} languages={settings.Language}+{settings.SecondLanguage} choice={choice} local={settings.LocalModel} cloud={CloudStt.ModelName(settings)}");
             using var transcriber = new Transcriber(settings);
             var watch = System.Diagnostics.Stopwatch.StartNew();
             int reports = 0;

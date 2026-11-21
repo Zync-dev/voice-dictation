@@ -9,14 +9,14 @@ using System.Windows.Threading;
 namespace Murmur;
 
 /// <summary>
-/// First-run setup in five short steps. Changes go straight into the app's settings, so skipping at any point keeps
+/// First-run setup in six short steps (the AI model one is optional). Changes go straight into the app's settings, so skipping at any point keeps
 /// what was chosen so far. The microphone test uses the app's own speech model; the practice step is a real dictation
 /// with the real hotkey into a text box in this window.
 /// </summary>
 public partial class OnboardingWindow : Window
 {
-    private enum Step { Welcome, Mic, Languages, Practice, Done }
-    private const int StepTotal = 5;
+    private enum Step { Welcome, Mic, Languages, Practice, Ai, Done }
+    private const int StepTotal = 6;
     private const int MeterBars = 48;
     private static readonly TimeSpan TestLength = TimeSpan.FromSeconds(6);
 
@@ -91,6 +91,7 @@ public partial class OnboardingWindow : Window
         TipCommandKeys.Content = Ui.Keys(S.CommandHotkey);
         TipCancelKeys.Content = Ui.Key("Esc");
         ScreenContextBox.IsChecked = S.UseScreenContext;
+        AiPanel.Load(S, setupMode: true); // AI providers: the optional AI step
 
         _meterTimer.Tick += (_, _) => TickMeter();
         _recorder.Level += level => _latestLevel = Math.Max(_latestLevel, level);
@@ -111,6 +112,7 @@ public partial class OnboardingWindow : Window
         Step.Mic => StepMic,
         Step.Languages => StepLanguages,
         Step.Practice => StepPractice,
+        Step.Ai => StepAi,
         _ => StepDone,
     };
 
@@ -136,6 +138,8 @@ public partial class OnboardingWindow : Window
 
         BackButton.Visibility = step == Step.Welcome ? Visibility.Collapsed : Visibility.Visible;
         SkipButton.Visibility = step == Step.Done ? Visibility.Collapsed : Visibility.Visible;
+        // AI providers: on the AI step, skipping means going on without AI, not leaving the setup.
+        SkipButton.Content = step == Step.Ai ? "Use Murmur without AI" : "Skip setup";
         NextButton.Content = step switch
         {
             Step.Welcome => "Get started",
@@ -157,7 +161,19 @@ public partial class OnboardingWindow : Window
     private void Next_Click(object sender, RoutedEventArgs e)
     {
         if (_step == Step.Done) { Close(); return; }
+        if (_step == Step.Ai) CommitAi();
         ShowStep(_step + 1);
+    }
+
+    /// <summary>AI providers: a provider with a key becomes the one in use, with AI polish on. Without a key, Murmur runs without AI.</summary>
+    private void CommitAi()
+    {
+        bool hadAi = AiConfig.IsConfigured(S);
+        if (AiPanel.Commit() && !hadAi)
+        {
+            S.AiCleanup = true;
+            S.Save();
+        }
     }
 
     private void Back_Click(object sender, RoutedEventArgs e)
@@ -165,7 +181,17 @@ public partial class OnboardingWindow : Window
         if (_step > Step.Welcome) ShowStep(_step - 1);
     }
 
-    private void Skip_Click(object sender, RoutedEventArgs e) => Close();
+    private void Skip_Click(object sender, RoutedEventArgs e)
+    {
+        if (_step == Step.Ai)
+        {
+            S.AiProvider = AiProviders.NoneId; // "Use Murmur without AI"; any key typed is kept for later
+            S.Save();
+            ShowStep(Step.Done);
+            return;
+        }
+        Close();
+    }
 
     // ---------- microphone ----------
 
@@ -453,8 +479,17 @@ public partial class OnboardingWindow : Window
                 lines.Add($"practice typed directly: worked={_practiceDone}");
             }
             await Shot("4b-practice-worked", 300);
+            ShowStep(Step.Ai);
+            await Shot("5-ai");
+            AiPanel.Preview(AiProviders.AnthropicId, "TagScript", "Anthropic answered with claude-opus-5-5 in 1.2 s.");
+            await Shot("5b-ai-anthropic", 400);
+            AiPanel.Preview(AiProviders.CustomId);
+            await Shot("5c-ai-custom", 400);
+            AiPanel.Preview(AiProviders.GroqId);
+            StepAi.ScrollToEnd();
+            await Shot("5d-ai-groq-key", 400);
             ShowStep(Step.Done);
-            await Shot("5-done");
+            await Shot("6-done");
         }
         catch (Exception ex) { lines.Add("FAILED " + ex); }
         File.AppendAllLines(Path.Combine(folder, "setup-shots.txt"), lines.Prepend($"--- {theme} {DateTime.Now:HH:mm:ss}"));

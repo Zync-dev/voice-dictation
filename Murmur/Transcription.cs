@@ -297,7 +297,7 @@ public sealed partial class Transcriber : IDisposable // long files: FileTranscr
             parts.Add(text);
             language ??= detected;
         }
-        LastTiming = $"cloud model={_settings.CloudSttModel} language={language} transcribe={cloudWatch.ElapsedMilliseconds}ms";
+        LastTiming = $"cloud model={CloudStt.ModelName(_settings)} language={language} transcribe={cloudWatch.ElapsedMilliseconds}ms";
         return new Transcript(string.Join(" ", parts.Where(p => p.Length > 0)), language);
     }
 
@@ -527,8 +527,8 @@ public sealed partial class Transcriber : IDisposable // long files: FileTranscr
 
     private async Task<(string Text, string? Language)> TranscribeCloudAsync(float[] samples, string prompt, CancellationToken ct, bool anyLanguage = false)
     {
-        var key = Secret.Unprotect(_settings.CloudSttKeyProtected);
-        if (string.IsNullOrEmpty(key)) throw new InvalidOperationException("Cloud transcription needs an API key (Settings).");
+        var stt = CloudStt.Resolve(_settings);
+        if (string.IsNullOrEmpty(stt.Key)) throw new InvalidOperationException("Cloud transcription needs an API key (Settings).");
 
         byte[] wav = AudioRecorder.ToWav(samples);
         // With two languages the cloud model listens first and only gets the main language forced on it if it heard neither.
@@ -546,12 +546,9 @@ public sealed partial class Transcriber : IDisposable // long files: FileTranscr
             var file = new ByteArrayContent(wav);
             file.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
             form.Add(file, "file", "audio.wav");
-            form.Add(new StringContent(_settings.CloudSttModel), "model");
-            form.Add(new StringContent(format), "response_format");
-            if (!auto) form.Add(new StringContent(requested), "language");
-            if (!string.IsNullOrWhiteSpace(prompt)) form.Add(new StringContent(prompt), "prompt");
-            using var request = new HttpRequestMessage(HttpMethod.Post, Http.Join(_settings.CloudSttBaseUrl, "audio/transcriptions")) { Content = form };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+            CloudStt.AddFields(form, stt, format, auto ? null : requested, prompt);
+            using var request = new HttpRequestMessage(HttpMethod.Post, Http.Join(stt.BaseUrl, "audio/transcriptions")) { Content = form };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", stt.Key);
             return await Http.Client.SendAsync(request, cts.Token);
         }
 
@@ -560,7 +557,7 @@ public sealed partial class Transcriber : IDisposable // long files: FileTranscr
             // verbose_json also reports the detected language, which the cleanup rules need on auto-detect.
             // Not every model supports it, so fall back to plain json on a 400.
             bool auto = requested == "auto";
-            var response = await SendAsync(auto ? "verbose_json" : "json");
+            var response = await SendAsync(auto ? CloudStt.DetectFormat(stt) : "json");
             if (auto && response.StatusCode == System.Net.HttpStatusCode.BadRequest)
             {
                 response.Dispose();
@@ -571,7 +568,7 @@ public sealed partial class Transcriber : IDisposable // long files: FileTranscr
             {
                 var json = await Http.ReadJsonAsync(response);
                 string text = (json["text"]?.GetValue<string>() ?? "").Trim();
-                heard = auto ? ToLanguageCode(json["language"]?.GetValue<string>()) : requested;
+                heard = auto ? ToLanguageCode(CloudStt.ReportedLanguage(json)) : requested;
                 if (!NeedsDetector || anyLanguage || OneOfUserLanguages(heard) != null) return (text, heard);
             }
 
@@ -604,36 +601,17 @@ public sealed partial class Transcriber : IDisposable // long files: FileTranscr
     }
 }
 
-/// <summary>Minimal client for any OpenAI-compatible /chat/completions endpoint (OpenAI, Groq, OpenRouter, Ollama...).</summary>
+/// <summary>
+/// Plain chat calls for polish, command mode, rewrite, translate, Ask and summaries. Goes to the AI provider picked in
+/// Settings through <see cref="AiService"/> (OpenAI-compatible services or Anthropic).
+/// </summary>
 public sealed class LlmClient
 {
     private readonly AppSettings _settings;
     public LlmClient(AppSettings settings) => _settings = settings;
 
-    public bool IsConfigured =>
-        !string.IsNullOrWhiteSpace(_settings.LlmBaseUrl) && !string.IsNullOrWhiteSpace(_settings.LlmModel) &&
-        (!string.IsNullOrEmpty(_settings.LlmKeyProtected) || _settings.LlmBaseUrl.Contains("localhost") || _settings.LlmBaseUrl.Contains("127.0.0.1"));
+    public bool IsConfigured => AiConfig.IsConfigured(_settings);
 
-    public async Task<string> CompleteAsync(string system, string user, CancellationToken ct = default)
-    {
-        var payload = new JsonObject
-        {
-            ["model"] = _settings.LlmModel,
-            ["messages"] = new JsonArray(
-                new JsonObject { ["role"] = "system", ["content"] = system },
-                new JsonObject { ["role"] = "user", ["content"] = user })
-        };
-        using var request = new HttpRequestMessage(HttpMethod.Post, Http.Join(_settings.LlmBaseUrl, "chat/completions"))
-        {
-            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
-        };
-        var key = Secret.Unprotect(_settings.LlmKeyProtected);
-        if (!string.IsNullOrEmpty(key)) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(TimeSpan.FromSeconds(45));
-        using var response = await Http.Client.SendAsync(request, cts.Token);
-        var json = await Http.ReadJsonAsync(response);
-        return (json["choices"]?[0]?["message"]?["content"]?.GetValue<string>() ?? "").Trim();
-    }
+    public Task<string> CompleteAsync(string system, string user, CancellationToken ct = default) =>
+        AiService.ChatAsync(_settings, new AiRequest(system, user), ct: ct, maxSeconds: 45);
 }

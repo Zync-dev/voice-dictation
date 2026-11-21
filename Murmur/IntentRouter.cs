@@ -378,55 +378,13 @@ public static partial class IntentRules
 public static class AiCall
 {
     /// <summary>
-    /// A chat completion. <paramref name="json"/> asks for a JSON object (retried without when the service does not
-    /// support it). <paramref name="imagePng"/> adds a picture (vision models only). <paramref name="model"/> overrides the model.
+    /// A chat completion through <see cref="AiService"/>. <paramref name="json"/> asks for a JSON object (retried without
+    /// when the service does not support it). <paramref name="image"/> adds a picture (vision models only).
+    /// <paramref name="model"/> overrides the model. These calls are short and someone waits for them, so they ask for light thinking.
     /// </summary>
-    public static async Task<string> ChatAsync(AppSettings s, string system, string user, bool json = false, byte[]? image = null, string imageType = "image/jpeg",
-        string? model = null, CancellationToken ct = default, double maxSeconds = 45)
-    {
-        model ??= s.LlmModel;
-        JsonNode userContent = image == null
-            ? JsonValue.Create(user)!
-            : new JsonArray(
-                new JsonObject { ["type"] = "text", ["text"] = user },
-                new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject { ["url"] = $"data:{imageType};base64,{Convert.ToBase64String(image)}" } });
-        async Task<string> Send(bool withJson)
-        {
-            var payload = new JsonObject
-            {
-                ["model"] = model,
-                ["messages"] = new JsonArray(
-                    new JsonObject { ["role"] = "system", ["content"] = system },
-                    new JsonObject { ["role"] = "user", ["content"] = userContent.DeepClone() }),
-            };
-            if (withJson) payload["response_format"] = new JsonObject { ["type"] = "json_object" };
-            // The reasoning models on Groq think less (and answer much sooner) when told to.
-            if (model.Contains("gpt-oss", StringComparison.OrdinalIgnoreCase)) payload["reasoning_effort"] = "low";
-            using var request = new HttpRequestMessage(HttpMethod.Post, Http.Join(s.LlmBaseUrl, "chat/completions"))
-            {
-                Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
-            };
-            var key = Secret.Unprotect(s.LlmKeyProtected);
-            if (!string.IsNullOrEmpty(key)) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(maxSeconds));
-            try
-            {
-                using var response = await Http.Client.SendAsync(request, cts.Token);
-                var node = await Http.ReadJsonAsync(response);
-                return (node["choices"]?[0]?["message"]?["content"]?.GetValue<string>() ?? "").Trim();
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                throw new InvalidOperationException("The AI model did not answer in time.");
-            }
-        }
-        try { return await Send(json); }
-        catch (InvalidOperationException ex) when (json && ex.Message.Contains("API error 400"))
-        {
-            return await Send(false); // a service without JSON mode: the prompt asks for JSON anyway
-        }
-    }
+    public static Task<string> ChatAsync(AppSettings s, string system, string user, bool json = false, byte[]? image = null, string imageType = "image/jpeg",
+        string? model = null, CancellationToken ct = default, double maxSeconds = 45) =>
+        AiService.ChatAsync(s, new AiRequest(system, user) { Json = json, Image = image, ImageType = imageType, Fast = true }, model, ct, maxSeconds);
 
     /// <summary>The first JSON object in a model's answer, or null.</summary>
     public static JsonNode? ParseJson(string answer)

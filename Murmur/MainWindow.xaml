@@ -571,7 +571,7 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <StackPanel Style="{StaticResource RowText}">
                                 <TextBlock Style="{StaticResource Label}" Text="Let the AI model look at the window"/>
-                                <TextBlock Style="{StaticResource RowHelp}" Text="Last resort when nothing else can read it: a picture of the window goes to the vision model below, at your AI address. Off by default. Groq may not offer a vision model."/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="Last resort when nothing else can read it: a picture of the window goes to the vision model below, at your AI provider. Off by default."/>
                             </StackPanel>
                             <CheckBox x:Name="ScreenVisionBox" Grid.Column="1" Click="HandsFreeSetting_Changed" AutomationProperties.Name="Let the AI model look at the window"/>
                         </Grid>
@@ -580,7 +580,7 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
                             <StackPanel Style="{StaticResource RowText}">
                                 <TextBlock Style="{StaticResource Label}" Text="Vision model"/>
-                                <TextBlock Style="{StaticResource RowHelp}" Text="Empty means none. Check your provider’s current model list."/>
+                                <TextBlock x:Name="ScreenVisionModelHelp" Style="{StaticResource RowHelp}" Text="Empty means none. Check your provider’s current model list."/>
                             </StackPanel>
                             <TextBox x:Name="ScreenVisionModelBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="HandsFreeSetting_Changed" AutomationProperties.Name="Vision model"/>
                         </Grid>
@@ -780,21 +780,37 @@
                             </Grid>
                         </StackPanel>
                         <StackPanel x:Name="CloudPanel">
+                            <!-- AI providers: the speech service (MainWindow.Ai.cs). Groq, OpenAI and Mistral share their key with the AI model. -->
                             <Border Style="{StaticResource RowLine}"/>
                             <Grid Style="{StaticResource SettingRow}">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
                                 <StackPanel Style="{StaticResource RowText}">
-                                    <TextBlock Style="{StaticResource Label}" Text="API address"/>
-                                    <TextBlock Style="{StaticResource RowHelp}" Text="Any OpenAI-compatible service, such as Groq or OpenAI."/>
+                                    <TextBlock Style="{StaticResource Label}" Text="Service"/>
+                                    <TextBlock x:Name="SttServiceHelp" Style="{StaticResource RowHelp}"/>
                                 </StackPanel>
-                                <TextBox x:Name="SttUrlBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="Setting_Changed" AutomationProperties.Name="Speech API address"/>
+                                <ComboBox x:Name="SttProviderBox" Grid.Column="1" VerticalAlignment="Center" DisplayMemberPath="Name"
+                                          SelectionChanged="SttProvider_Changed" AutomationProperties.Name="Speech service"/>
                             </Grid>
+                            <StackPanel x:Name="SttAddressRow">
+                                <Border Style="{StaticResource RowLine}"/>
+                                <Grid Style="{StaticResource SettingRow}">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                                    <StackPanel Style="{StaticResource RowText}">
+                                        <TextBlock Style="{StaticResource Label}" Text="API address"/>
+                                        <TextBlock Style="{StaticResource RowHelp}" Text="Any OpenAI-compatible speech service."/>
+                                    </StackPanel>
+                                    <TextBox x:Name="SttUrlBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="Setting_Changed" AutomationProperties.Name="Speech API address"/>
+                                </Grid>
+                            </StackPanel>
                             <Border Style="{StaticResource RowLine}"/>
                             <Grid Style="{StaticResource SettingRow}">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
                                 <StackPanel Style="{StaticResource RowText}">
                                     <TextBlock Style="{StaticResource Label}" Text="Model"/>
+                                    <TextBlock x:Name="SttModelHelp" Style="{StaticResource RowHelp}"/>
                                 </StackPanel>
+                                <ComboBox x:Name="SttModelChoiceBox" Grid.Column="1" VerticalAlignment="Center" DisplayMemberPath="Label"
+                                          SelectionChanged="SttModel_Changed" AutomationProperties.Name="Speech model"/>
                                 <TextBox x:Name="SttModelBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="Setting_Changed" AutomationProperties.Name="Speech model name"/>
                             </Grid>
                             <Border Style="{StaticResource RowLine}"/>
@@ -802,51 +818,29 @@
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
                                 <StackPanel Style="{StaticResource RowText}">
                                     <TextBlock Style="{StaticResource Label}" Text="API key"/>
-                                    <TextBlock Style="{StaticResource RowHelp}" Text="Stored encrypted for your Windows account."/>
+                                    <TextBlock x:Name="SttKeyHelp" Style="{StaticResource RowHelp}"/>
+                                    <Button x:Name="SttKeyPageButton" Style="{StaticResource BtnGhost}" HorizontalAlignment="Left" Margin="-12,4,0,0"
+                                            Click="SttKeyPage_Click"/>
                                 </StackPanel>
-                                <PasswordBox x:Name="SttKeyBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="Setting_Changed" AutomationProperties.Name="Speech API key"/>
+                                <PasswordBox x:Name="SttKeyBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="SttKey_LostFocus" AutomationProperties.Name="Speech API key"/>
                             </Grid>
                         </StackPanel>
                     </StackPanel>
                 </Border>
 
-                <!-- AI polish -->
-                <TextBlock Style="{StaticResource SectionHeading}" Text="AI polish"/>
-                <Border Style="{StaticResource SettingsCard}">
+                <!-- AI polish: the AI provider, its key guide and model (AiProviderPanel.xaml, MainWindow.Ai.cs) -->
+                <TextBlock x:Name="AiHeading" Style="{StaticResource SectionHeading}" Text="AI polish"/>
+                <Border x:Name="AiCard" Style="{StaticResource SettingsCard}">
                     <StackPanel>
+                        <local:AiProviderPanel x:Name="AiPanel"/>
+                        <Border Style="{StaticResource RowLine}"/>
                         <Grid Style="{StaticResource SettingRow}">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <StackPanel Style="{StaticResource RowText}">
                                 <TextBlock Style="{StaticResource Label}" Text="Polish dictations with AI"/>
                                 <TextBlock Style="{StaticResource RowHelp}" Text="Fixes grammar, applies corrections you say aloud, formats lists and matches the tone. Command mode uses the same model."/>
                             </StackPanel>
                             <CheckBox x:Name="AiCleanupBox" Grid.Column="1" HorizontalAlignment="Right" Click="Setting_Changed" AutomationProperties.Name="Polish dictations with AI"/>
-                        </Grid>
-                        <Border Style="{StaticResource RowLine}"/>
-                        <Grid Style="{StaticResource SettingRow}">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
-                            <StackPanel Style="{StaticResource RowText}">
-                                <TextBlock Style="{StaticResource Label}" Text="API address"/>
-                                <TextBlock Style="{StaticResource RowHelp}" Text="Any OpenAI-compatible service. To stay on this PC, use Ollama at http://localhost:11434/v1"/>
-                            </StackPanel>
-                            <TextBox x:Name="LlmUrlBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="Setting_Changed" AutomationProperties.Name="AI API address"/>
-                        </Grid>
-                        <Border Style="{StaticResource RowLine}"/>
-                        <Grid Style="{StaticResource SettingRow}">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
-                            <StackPanel Style="{StaticResource RowText}">
-                                <TextBlock Style="{StaticResource Label}" Text="Model"/>
-                            </StackPanel>
-                            <TextBox x:Name="LlmModelBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="Setting_Changed" AutomationProperties.Name="AI model name"/>
-                        </Grid>
-                        <Border Style="{StaticResource RowLine}"/>
-                        <Grid Style="{StaticResource SettingRow}">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
-                            <StackPanel Style="{StaticResource RowText}">
-                                <TextBlock Style="{StaticResource Label}" Text="API key"/>
-                                <TextBlock Style="{StaticResource RowHelp}" Text="Not needed for a local address."/>
-                            </StackPanel>
-                            <PasswordBox x:Name="LlmKeyBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="Setting_Changed" AutomationProperties.Name="AI API key"/>
                         </Grid>
                     </StackPanel>
                 </Border>

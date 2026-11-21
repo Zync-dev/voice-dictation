@@ -61,6 +61,7 @@ public partial class App : Application
         if (HandsFreeTests.TryRun(this, e.Args)) return; // Hands-free: --routertest, --screentest (HandsFreeTests.cs)
         if (ControlTests.TryRun(this, e.Args)) return; // Hands-free computer control: --controltest (ControlTests.cs)
         if (EditSpeakTests.TryRun(this, e.Args)) return; // edit-speak: --edittest, --speaktest (EditSpeakTests.cs)
+        if (ProviderTests.TryRun(this, e.Args)) return; // AI providers: --providertest (ProviderTests.cs)
         if (TaskTests.TryRun(this, e.Args)) return; // Hands-free: multi-step tasks: --tasktest, --task-demo (TaskTests.cs)
 
         if (e.Args.Length == 3 && e.Args[0] == "--eval")
@@ -177,7 +178,7 @@ public partial class App : Application
             string? engine = Environment.GetEnvironmentVariable("MURMUR_ENGINE");
             if (engine == "local") settings.Engine = SttEngine.Local;
             if (engine == "cloud") settings.Engine = SttEngine.Cloud;
-            lines.Add($"engine={settings.Engine} languages={settings.Language}+{settings.SecondLanguage} cloud={settings.CloudSttModel} local={settings.LocalModel}");
+            lines.Add($"engine={settings.Engine} languages={settings.Language}+{settings.SecondLanguage} cloud={CloudStt.ModelName(settings)} local={settings.LocalModel}");
             using var transcriber = new Transcriber(settings);
             if (settings.Engine == SttEngine.Local) await transcriber.EnsureLocalModelAsync();
             // MURMUR_LANGTEST_PIPELINE=1: the audio clean-up and the word list a real dictation gets.

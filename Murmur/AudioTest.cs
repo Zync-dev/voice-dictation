@@ -69,7 +69,7 @@ public static class AudioTest
             using var transcriber = new Transcriber(settings);
             if (settings.Engine == SttEngine.Local) await transcriber.EnsureLocalModelAsync();
             lines.Add("");
-            lines.Add($"TRANSCRIBE engine={settings.Engine} model={(settings.Engine == SttEngine.Local ? settings.LocalModel : settings.CloudSttModel)}, language forced from the clip name");
+            lines.Add($"TRANSCRIBE engine={settings.Engine} model={(settings.Engine == SttEngine.Local ? settings.LocalModel : CloudStt.ModelName(settings))}, language forced from the clip name");
 
             var onlyVariants = Filter("MURMUR_AUDIOTEST_VARIANTS");
             var onlyConfigs = Filter("MURMUR_AUDIOTEST_CONFIGS");

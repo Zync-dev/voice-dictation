@@ -91,14 +91,8 @@ public partial class MainWindow : Window
         ModelBox.SelectedValue = LocalModel.Get(S.LocalModel).Id;
         EngineLocal.IsChecked = S.Engine == SttEngine.Local;
         EngineCloud.IsChecked = S.Engine == SttEngine.Cloud;
-        SttUrlBox.Text = S.CloudSttBaseUrl;
-        SttModelBox.Text = S.CloudSttModel;
-        SttKeyBox.Password = Secret.Unprotect(S.CloudSttKeyProtected);
-
         AiCleanupBox.IsChecked = S.AiCleanup;
-        LlmUrlBox.Text = S.LlmBaseUrl;
-        LlmModelBox.Text = S.LlmModel;
-        LlmKeyBox.Password = Secret.Unprotect(S.LlmKeyProtected);
+        LoadAiSettings(); // AI providers: the AI card and the speech service (MainWindow.Ai.cs)
 
         FillersBox.IsChecked = S.RemoveFillers;
         TrailingSpaceBox.IsChecked = S.TrailingSpace;
@@ -494,13 +488,9 @@ public partial class MainWindow : Window
         S.SecondLanguage = SecondLanguageBox.SelectedValue as string ?? "";
         SecondLanguagePanel.Visibility = S.Language == "auto" ? Visibility.Collapsed : Visibility.Visible;
         S.Engine = EngineCloud.IsChecked == true ? SttEngine.Cloud : SttEngine.Local;
-        S.CloudSttBaseUrl = SttUrlBox.Text.Trim();
-        S.CloudSttModel = SttModelBox.Text.Trim();
-        S.CloudSttKeyProtected = Secret.Protect(SttKeyBox.Password.Trim());
+        SaveSttFields(); // AI providers (MainWindow.Ai.cs)
+        AiPanel.Flush();
         S.AiCleanup = AiCleanupBox.IsChecked == true;
-        S.LlmBaseUrl = LlmUrlBox.Text.Trim();
-        S.LlmModel = LlmModelBox.Text.Trim();
-        S.LlmKeyProtected = Secret.Protect(LlmKeyBox.Password.Trim());
         S.RemoveFillers = FillersBox.IsChecked == true;
         S.TrailingSpace = TrailingSpaceBox.IsChecked == true;
         S.RestoreClipboard = RestoreClipboardBox.IsChecked == true;

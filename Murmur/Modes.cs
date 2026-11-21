@@ -44,7 +44,7 @@ public static partial class Modes
         // The turbo models were trained without translation and write the original language back (measured with --modestest).
         if (s.Engine == SttEngine.Local) return LocalModelTranslates(s) ? TranslateRoute.WhisperLocal : TranslateRoute.Unavailable;
         // The translations endpoint takes only Whisper models (OpenAI: whisper-1), not gpt-4o-transcribe and the like.
-        return string.IsNullOrEmpty(s.CloudSttKeyProtected) || CloudTranslateModel(s) == null ? TranslateRoute.Unavailable : TranslateRoute.WhisperCloud;
+        return !CloudStt.HasKey(s) || CloudTranslateModel(s) == null ? TranslateRoute.Unavailable : TranslateRoute.WhisperCloud;
     }
 
     /// <summary>
@@ -54,10 +54,13 @@ public static partial class Modes
     /// </summary>
     internal static string? CloudTranslateModel(AppSettings s)
     {
-        string model = s.CloudSttModel.Trim();
-        if (s.CloudSttBaseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase))
+        var t = CloudStt.Resolve(s);
+        string model = t.Model;
+        if (t.BaseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase))
             return model.Contains("whisper", StringComparison.OrdinalIgnoreCase) && !model.Contains("turbo", StringComparison.OrdinalIgnoreCase) ? model : "whisper-large-v3";
-        if (s.CloudSttBaseUrl.Contains("api.openai.com", StringComparison.OrdinalIgnoreCase)) return "whisper-1";
+        // OpenAI's whisper-1 (the only one there that translates) shuts down on 2027-02-26; after that this returns an API error.
+        if (t.BaseUrl.Contains("api.openai.com", StringComparison.OrdinalIgnoreCase)) return "whisper-1";
+        if (t.Provider.Id == AiProviders.MistralId) return null; // Voxtral has no translations endpoint
         return model.Contains("whisper", StringComparison.OrdinalIgnoreCase) ? model : null;
     }
 
@@ -69,7 +72,7 @@ public static partial class Modes
         HotkeyKind.Translate when RouteFor(s, llmConfigured) == TranslateRoute.Unavailable =>
             s.TranslateTarget == "en" && s.Engine == SttEngine.Local && !LocalModelTranslates(s)
                 ? "Translating needs an AI model. The Turbo speech model cannot translate."
-                : s.TranslateTarget == "en" && s.Engine == SttEngine.Cloud && !string.IsNullOrEmpty(s.CloudSttKeyProtected)
+                : s.TranslateTarget == "en" && s.Engine == SttEngine.Cloud && CloudStt.HasKey(s)
                 ? "Translating needs an AI model. This cloud speech model cannot translate."
                 : $"Translating into {LanguageName(s.TranslateTarget)} needs an AI model. Add one in Settings.",
         HotkeyKind.Ask when !llmConfigured => "Ask needs an AI model. Add one in Settings.",
@@ -129,7 +132,8 @@ public static partial class Modes
     /// </summary>
     public static async Task<string> CloudTranslateAsync(AppSettings s, float[] samples, CancellationToken ct = default)
     {
-        var key = Secret.Unprotect(s.CloudSttKeyProtected);
+        var stt = CloudStt.Resolve(s);
+        var key = stt.Key;
         if (string.IsNullOrEmpty(key)) throw new InvalidOperationException("Cloud transcription needs an API key (Settings).");
         string model = CloudTranslateModel(s) ?? throw new InvalidOperationException("This cloud speech model cannot translate. Add an AI model in Settings.");
         using var form = new MultipartFormDataContent();
@@ -138,7 +142,7 @@ public static partial class Modes
         form.Add(file, "file", "audio.wav");
         form.Add(new StringContent(model), "model");
         form.Add(new StringContent("json"), "response_format");
-        using var request = new HttpRequestMessage(HttpMethod.Post, Http.Join(s.CloudSttBaseUrl, "audio/translations")) { Content = form };
+        using var request = new HttpRequestMessage(HttpMethod.Post, Http.Join(stt.BaseUrl, "audio/translations")) { Content = form };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(30 + 2 * samples.Length / (double)AudioRecorder.SampleRate, 60, 300)));

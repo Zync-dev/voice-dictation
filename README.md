@@ -14,9 +14,9 @@ Voice dictation for Windows. Hold a hotkey in any app, talk, release - the text 
 | Voice editing and read aloud | In command mode: "ret tirsdag til onsdag", "marker sidste sætning", "slet sidste sætning", "gør det mere høfligt", "store bogstaver", "go to the end"; "læs op" / "read the email" with Windows' own Danish and English voices, "stop", "læs hurtigere". See below. |
 | Multi-step tasks | In command mode: "find mailen fra Daniel om tilbuddet og svar at vi går videre", "åbn Slack og skriv til Mette at jeg er forsinket", "find the email from James and reply that I can join". The card shows the plan as numbered steps and runs it only after "ja" or "kør". Sending asks again. See below. |
 | On-device transcription | Whisper runs locally (whisper.cpp). Free, private, offline. Uses the GPU through Vulkan when available. |
-| Cloud transcription (optional) | Any OpenAI-compatible `/audio/transcriptions` API (Groq, OpenAI, ...). |
+| Cloud transcription (optional) | Groq, OpenAI or Mistral, picked from a list with their speech models, or any OpenAI-compatible `/audio/transcriptions` address. See [AI providers](#ai-providers). |
 | Automatic cleanup | Removes filler words, understands "new line" / "new paragraph", fixes capitalization. |
-| AI polish (optional) | An LLM applies self-corrections ("at five, no, six"), fixes grammar, formats lists. Any OpenAI-compatible chat API, including local Ollama. |
+| AI polish (optional) | An LLM applies self-corrections ("at five, no, six"), fixes grammar, formats lists. Pick Groq, OpenAI, Anthropic (Claude), Google Gemini or Mistral, with a step-by-step guide to the API key and a model list with a recommended model, or any OpenAI-compatible address, including local Ollama. See [AI providers](#ai-providers). |
 | Personal dictionary | Names and jargon are given to the speech model as hints, plus automatic "misheard as" replacements. |
 | Snippets | Say a short trigger phrase, get a long text. |
 | Per-app style | Formal in Outlook, casual in Slack - configurable per process name. |
@@ -176,7 +176,7 @@ Reading the window (`ScreenReader.cs`), only when a command asks for it, with "R
 
 1. UI Automation on its own worker thread, at most 2.5 s and 4,000 elements: the selected list item (the message picked in the inbox) first, then the open document (a reading pane, a web page, an editor), then labels and list items. Menus, toolbars and buttons are skipped. About 50-180 ms on the test window.
 2. When that gives fewer than 160 letters: a picture of the window (`PrintWindow`, so other windows and Murmur's own card are not in it) read by Windows' built-in OCR (`Windows.Media.Ocr`) in your main language, else the second, else English. Settings shows which OCR languages Windows has. About 150-300 ms. On this PC only.
-3. Optional, off by default: the picture goes to a vision model at your AI address (Settings > Hands-free > Vision model; empty means none). Groq may not offer one (`meta-llama/llama-4-scout-17b-16e-instruct` returned 404 on the test account); OpenAI-compatible services with vision models work the same way.
+3. Optional, off by default: the picture goes to a vision model at your AI provider (Settings > Hands-free > Vision model; empty means none). Every provider's list marks the models that read pictures, for example `gpt-6-luna`, `claude-opus-5-5`, `gemini-3.1-flash-lite`, `mistral-small-latest` or Groq's preview `qwen/qwen3.8-27b` (`meta-llama/llama-4-scout-17b-16e-instruct` returned 404 on the Groq test account).
 
 The text is cleaned and capped at 8,000 characters.
 
@@ -425,9 +425,52 @@ Settings > Sound. Everything runs in-process on the CPU (about 1.5-2 ms per seco
 
 `Murmur.exe --audiotest folder out.txt` replays the WAVs in a folder (with an optional `clips.tsv` of name, language and text for word error rates) through the auto-stop detector (pauses, typing, fan noise, whispering), checks that trimming never cuts into a word, and transcribes clean, padded, paused, noisy (white, pink + hum at 5 and 10 dB) and whisper-level variants with each step on and off. `MURMUR_ENGINE`, `MURMUR_AUDIOTEST_CLIPS`, `_VARIANTS`, `_CONFIGS`, `_SEEDS` and `_MARGINS` narrow or vary the run. `--autostop-demo=folder` plays the countdown on the card and saves screen grabs; `--show-sound` scrolls Settings to the Sound card.
 
+## AI providers
+
+Settings > AI polish. Pick a provider card; the panel under it says how to get a key from that provider (numbered steps and **Open the key page**, which opens the provider's key page in your browser), what Murmur sends to it, and any catch (billing, free tier, the EU). Paste the key and press **Test**: one tiny request, then "Works" or the provider's answer in plain words ("Groq did not accept the key...", "OpenAI does not offer the model ... to this key"). The model drop-down shows Murmur's own list with the **Recommended** model first; with a key, the refresh button (and a new key or a working test) loads the models that key can really use, merged with Murmur's notes. **Use an AI model** turns all AI features off. The first-run setup has the same panel as an optional step 5 ("Use Murmur without AI" skips it).
+
+| Provider | Recommended model | Other models offered | Speech recognition | Key page | Notes |
+| --- | --- | --- | --- | --- | --- |
+| Groq | `openai/gpt-oss-120b` | `llama-3.3-70b-versatile`, `openai/gpt-oss-20b`, `llama-3.1-8b-instant`, `qwen/qwen3.8-27b` (pictures, preview), `minimaxai/minimax-m2.7` | `whisper-large-v3-turbo` (recommended), `whisper-large-v3` (also translates) | console.groq.com/keys | Free plan, no card. Very fast. |
+| OpenAI | `gpt-6-luna` | `gpt-6.1-terra`, `gpt-6.2-sol`, `gpt-6.2-astra` | `gpt-transcribe` (recommended), `whisper-1` (translates; shuts down 2027-02-26) | platform.openai.com/api-keys | Pay as you go; small free allowance in most countries. |
+| Anthropic | `claude-opus-5-5` | `claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-fable-5-2` | none | platform.claude.com/settings/keys | Prepaid credit. Uses the official Anthropic C# SDK. |
+| Google Gemini | `gemini-3.1-flash-lite` | `gemini-3.5-flash-lite`, `gemini-3.6-flash`, `gemini-3.8-flash`, `gemini-4-hydrogen`, `gemini-4-carbon` | none (not OpenAI-compatible) | aistudio.google.com/apikey | Free tier. In the EU/EEA Google's terms ask for the paid service, so the guide says to turn on billing. |
+| Mistral | `mistral-small-latest` | `mistral-large-latest`, `ministral-14b-latest`, `ministral-8b-latest` | `voxtral-mini-transcribe-latest` (recommended), `voxtral-small-transcribe-latest` (preview; no translation) | console.mistral.ai/api-keys | Billing must be on before a key can be made. Based in the EU. |
+| Custom | (you type it) | | any OpenAI-compatible address | | OpenRouter, a company server, Ollama on this PC (`http://localhost:11434/v1`, no key). |
+
+How the calls are made (`AiService.cs`, `AiAnthropic.cs`, `CloudStt.cs`):
+
+- Every feature (polish, command mode, rewrite, Translate, Ask, summaries, the hands-free router and intents, tasks, the vision layer) goes through `AiService.ChatAsync`, which picks an adapter: OpenAI-compatible (`/chat/completions`) for Groq, OpenAI, Gemini, Mistral and Custom, or the Anthropic SDK. The prompts are the same for every provider.
+- Each provider gets only parameters it accepts: OpenAI and Groq take `max_completion_tokens`, the others `max_tokens` (Murmur only sends a limit for the Test request). `reasoning_effort`: OpenAI `none` on Luna/Terra and `low` on Sol/Astra, Gemini `minimal`, Mistral Large `low`, Groq and Custom `low` on gpt-oss for the hands-free calls only (as before), nothing for models that refuse it. `temperature`, `top_p`, `n` and `logprobs` are never sent. JSON mode is `response_format: json_object` (sent again without it on a 400); Anthropic gets the request for JSON in the system prompt. Pictures go as an `image_url` data URI (a plain string for Mistral) or an Anthropic base64 image block.
+- Anthropic: system prompt in the system field, one user turn (no prefill), `output_config.effort: low` on Claude 5 models (thinking cannot be turned off on Opus 5.5, so Murmur keeps it short), 8,000 tokens of room; a `refusal` stop reason becomes "Claude declined this request." The key and address are always set from the settings, so the SDK never falls back to `ANTHROPIC_API_KEY` or `ANTHROPIC_BASE_URL`.
+- Speech: Groq and Whisper models as before (`verbose_json` for the language); OpenAI's `gpt-transcribe` gets `languages[]` and plain `json`; Mistral's Voxtral gets no `response_format` and reports its own JSON. Translate without an AI model uses Groq `whisper-large-v3` or OpenAI `whisper-1`; Mistral has no translation.
+
+Keys and settings (`settings.json`):
+
+| Setting | What it holds |
+| --- | --- |
+| `AiProvider` | `groq`, `openai`, `anthropic`, `gemini`, `mistral`, `custom` or `none` |
+| `AiKeys` | One key per provider, each encrypted with DPAPI for your Windows user. Switching provider keeps every key. Groq, OpenAI and Mistral share their key between the AI model and speech recognition. |
+| `AiModels` | The chosen model per provider (none means the recommended one) |
+| `AiModelCache` | Each provider's own model list and when it was fetched; offline, Murmur's list is used |
+| `SttProvider`, `SttModels` | The cloud speech service and its model per provider |
+| `LlmBaseUrl`, `CloudSttBaseUrl`, `CloudSttModel`, `CloudSttKeyProtected` | The Custom provider's address (AI and speech), and Custom speech's model and key |
+
+An older settings file is moved over once when it loads: a Groq address stays Groq with its key and model; any other address becomes Custom with the same address, model and key, so it sends exactly the same requests; with no key (and no local address) the provider is `none`, so a Groq speech key alone never switches AI features on. A Groq speech key becomes the shared Groq key when there was no Groq AI key.
+
+Developer switches (run with `MURMUR_DATA_DIR` set):
+
+| Switch | What it does |
+| --- | --- |
+| `--providertest out.txt` | (a) Builds requests for every provider against a mock server on localhost and checks address, headers and body: token limit name, `reasoning_effort`, JSON mode and its fallback, pictures, the Anthropic SDK's request (system, effort, image block, no temperature or prefill), a refusal, errors in plain words, model lists and their filters, key hints and the speech form fields. (b) Moves old settings files over (Groq, other address, Ollama, no key, speech only, saved and loaded again, switching provider). (c) Five real calls to Groq with the test settings' key: Test, a polish, a JSON router call, the model list and a wrong key. `MURMUR_PROVIDERTEST_REAL=0` skips (c), `=min` makes only the first two. Exit code 1 on a failure |
+| `--show-ai` / `--show-ai=openai` | Scrolls Settings to the AI card (and shows that provider's guide, without saving) |
+| `--show-stt=groq` | Shows the cloud speech picker with that service |
+| `--show-offset=N` | With the two above: scrolls N pixels further |
+| `--min-size` | Opens the main window at its minimum size |
+
 ## Installer, updates and first run
 
-- **First-run setup.** With no `settings.json` (a fresh install) Murmur opens a five-step setup instead of the main window: welcome, microphone (live level meter and a "Test the microphone" button that writes down what it heard), languages (main and second), hotkey practice (hold the real hotkey and dictate into a box in the setup window) and tips (hands-free, command mode, Esc). Every step can be skipped; choices save as they are made. Settings > Updates and setup > **Run setup again** reopens it.
+- **First-run setup.** With no `settings.json` (a fresh install) Murmur opens a six-step setup instead of the main window: welcome, microphone (live level meter and a "Test the microphone" button that writes down what it heard), languages (main and second), hotkey practice (hold the real hotkey and dictate into a box in the setup window), an optional AI model (provider, key guide, key and Test, model; a provider with a key is used and AI polish is turned on, "Use Murmur without AI" skips it) and tips (hands-free, command mode, Esc). Every step can be skipped; choices save as they are made. Settings > Updates and setup > **Run setup again** reopens it.
 - **Installer.** `build-installer.ps1` (repo root) publishes a self-contained win-x64 ReadyToRun build, drops the Linux/ARM/x86 speech runtimes, checks that the CPU and Vulkan whisper runtimes and the fonts are included, and runs Velopack's `vpk pack` (a local dotnet tool, `dotnet tool restore`). Output in `Releases\`: `Murmur-win-Setup.exe`, `Murmur-win-Portable.zip`, `Murmur-<version>-full.nupkg` and `releases.win.json`. `-Version 1.0.1` sets the version (default: `<Version>` in `Murmur.csproj`). Setup installs per user into `%LocalAppData%\Murmur` with a Start menu shortcut; settings stay in `%AppData%\Murmur`. Nothing is uploaded: publish a release with `dotnet vpk upload github --repoUrl https://github.com/Zync-dev/voice-dictation --token <token> --publish --tag v<version>`.
 - **Updates.** An installed copy checks its update source 45 s after start and then every 4 hours, downloads a newer version quietly and shows "Restart to update" in Settings, in the sidebar and in the tray menu (with one notification). Quitting without restarting installs it on the next start. Copies run from a build folder never update. Settings > Updates and setup: **Update automatically** (on by default), **Update source** (default `https://github.com/Zync-dev/voice-dictation`; a folder or web address with `build-installer.ps1` output also works) and **GitHub access token**. The repository is private, so GitHub updates need a token that can read its contents (a fine-grained token with read-only "Contents" access); it is stored encrypted with DPAPI. Update checks only contact the update source and send nothing about the user.
 - **Start with Windows** points at the installed copy's `%LocalAppData%\Murmur\current\Murmur.exe`, which Velopack keeps at the same path across updates; an installed copy repairs the entry at startup if it points elsewhere, and uninstalling removes it. Test runs (`MURMUR_DATA_DIR`) never touch the entry.
@@ -445,14 +488,14 @@ Developer switches (run with `MURMUR_DATA_DIR` set):
 
 ## Where data lives
 
-`%AppData%\Murmur` - `settings.json`, `history.json`, `murmur.log` and `models\`. API keys are encrypted with Windows DPAPI for your user account.
+`%AppData%\Murmur` - `settings.json`, `history.json`, `murmur.log` and `models\`. API keys (one per AI provider) are encrypted with Windows DPAPI for your user account.
 
 ## Known limits
 
 - Text is inserted by a clipboard paste (Ctrl+V). Apps that block pasting will not receive it.
 - Windows does not let a normal app type into windows running as administrator. Run Murmur as administrator if you need that.
 - Tone styles (other than "Very casual") and Command mode need an AI model configured in Settings.
-- The default cloud model names in Settings are suggestions; check your provider's current model list.
+- Murmur's model lists were checked against the providers' documentation in November 2026. With a key, the refresh button loads the provider's current list.
 
 ## Layout
 
@@ -463,6 +506,7 @@ Developer switches (run with `MURMUR_DATA_DIR` set):
 | `Audio.cs` | Microphone capture, normalization, WAV encoding, sounds |
 | `AudioProcessing.cs` | Noise suppression, silence trimming, whisper-mode gain, live speech detection |
 | `Transcription.cs` | Local Whisper, cloud speech-to-text, LLM client |
+| `AiProviders.cs`, `AiService.cs`, `AiAnthropic.cs`, `CloudStt.cs`, `AiProviderPanel.xaml` | AI providers: the provider list with key guides and models, the adapters every AI call goes through, cloud speech per provider, the provider panel in Settings and setup |
 | `TextProcessor.cs` | Cleanup rules, dictionary, snippets, AI prompts |
 | `Native.cs` | Win32 interop, active-window detection, text insertion |
 | `OverlayWindow.xaml` | Recording indicator pill |

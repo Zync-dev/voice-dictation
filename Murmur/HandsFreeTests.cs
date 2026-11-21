@@ -364,6 +364,7 @@ public static class HandsFreeTests
                     {
                         ScreenOcr = false, ScreenVision = true, ScreenVisionModel = visionModel, ExcludedApps = settings.ExcludedApps,
                         LlmBaseUrl = settings.LlmBaseUrl, LlmKeyProtected = settings.LlmKeyProtected, LlmModel = settings.LlmModel,
+                        AiProvider = settings.AiProvider, AiKeys = settings.AiKeys, AiModels = settings.AiModels,
                     };
                     var seen = await ScreenReader.ReadAsync(hwnd, vision);
                     Check(lines, seen.Content is { Source: "vision" } && seen.Content.Text.Contains("Vesterbrogade"), $"vision model {visionModel} read the picture: {seen.Content?.Source} ({seen.Note})");

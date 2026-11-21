@@ -84,14 +84,34 @@ public class AppSettings
 
     public SttEngine Engine { get; set; } = SttEngine.Local;
     public string LocalModel { get; set; } = "base";
+    /// <summary>Speech API address for the Custom speech provider (and, in an old settings file, the one speech address).</summary>
     public string CloudSttBaseUrl { get; set; } = "https://api.groq.com/openai/v1";
+    /// <summary>Speech model for the Custom speech provider. Use <see cref="CloudStt.Resolve"/> for the model in use.</summary>
     public string CloudSttModel { get; set; } = "whisper-large-v3-turbo";
+    /// <summary>API key for the Custom speech provider. The others share <see cref="AiKeys"/>.</summary>
     public string CloudSttKeyProtected { get; set; } = "";
 
     public bool AiCleanup { get; set; }
+    /// <summary>The Custom provider's chat API address. From before AI providers: the one AI address (moved into the fields below on load).</summary>
     public string LlmBaseUrl { get; set; } = "https://api.groq.com/openai/v1";
+    /// <summary>From before AI providers: read once by <see cref="AiConfig.Migrate"/>; the model now lives in <see cref="AiModels"/>.</summary>
     public string LlmModel { get; set; } = "llama-3.3-70b-versatile";
+    /// <summary>From before AI providers: read once by <see cref="AiConfig.Migrate"/>; keys now live in <see cref="AiKeys"/>.</summary>
     public string LlmKeyProtected { get; set; } = "";
+
+    // ---- AI providers (AiProviders.cs, AiService.cs) ----
+    /// <summary>The AI provider in use (<see cref="AiProviders"/> ids: groq, openai, anthropic, gemini, mistral, custom) or "none". Empty in a settings file from before providers: filled in on load.</summary>
+    public string AiProvider { get; set; } = "";
+    /// <summary>API key per provider id, encrypted with DPAPI. Shared by the AI model and speech recognition, so switching provider keeps every key.</summary>
+    public Dictionary<string, string> AiKeys { get; set; } = [];
+    /// <summary>Chosen chat model per provider id. A provider without an entry uses its recommended model.</summary>
+    public Dictionary<string, string> AiModels { get; set; } = [];
+    /// <summary>The provider's own model list, per provider id, from the last time Murmur asked it.</summary>
+    public Dictionary<string, AiModelList> AiModelCache { get; set; } = [];
+    /// <summary>Speech recognition service when Engine is Cloud (groq, openai, mistral, custom). Empty in an old settings file: filled in on load.</summary>
+    public string SttProvider { get; set; } = "";
+    /// <summary>Chosen speech model per provider id. Custom uses <see cref="CloudSttModel"/>.</summary>
+    public Dictionary<string, string> SttModels { get; set; } = [];
 
     public bool RemoveFillers { get; set; } = true;
     public bool TrailingSpace { get; set; } = true;
@@ -273,12 +293,17 @@ public class AppSettings
                     loaded.ExcludedApps = string.Join(", ", names);
                     loaded.PasswordManagersExcluded = true;
                 }
+                if (string.IsNullOrEmpty(loaded.AiProvider) || string.IsNullOrEmpty(loaded.SttProvider))
+                {
+                    AiConfig.Migrate(loaded); // AI providers: an old single AI address becomes a provider
+                    Log.Write($"Settings: moved to AI providers (AI {loaded.AiProvider}, speech {loaded.SttProvider})");
+                }
                 return loaded;
             }
         }
         catch (Exception ex) { Log.Write("Settings load failed: " + ex.Message); }
 
-        var fresh = new AppSettings { PasswordManagersExcluded = true };
+        var fresh = new AppSettings { PasswordManagersExcluded = true, AiProvider = AiProviders.NoneId, SttProvider = AiProviders.GroqId };
         // Guessing among a hundred languages is unreliable on short sentences, so start from the Windows language.
         string system = System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
         if (system == "nb" || system == "nn") system = "no";
@@ -312,6 +337,13 @@ public class AppSettings
                 return r.Style;
         return DefaultStyle;
     }
+}
+
+/// <summary>A provider's own model list as fetched (<see cref="AiService.RefreshModelsAsync"/>).</summary>
+public class AiModelList
+{
+    public DateTime Fetched { get; set; }
+    public List<string> Ids { get; set; } = [];
 }
 
 /// <summary>API keys are encrypted for the current Windows user (DPAPI) before touching disk.</summary>

@@ -1,16 +1,19 @@
 <Window x:Class="Murmur.OnboardingWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Murmur"
         Title="Set up Murmur" Width="880" Height="700" MinWidth="760" MinHeight="660"
         WindowStartupLocation="CenterScreen" ResizeMode="CanMinimize"
         Background="{DynamicResource Ground}" Foreground="{DynamicResource Ink}"
         FontFamily="{StaticResource FontBody}" FontSize="14"
         UseLayoutRounding="True" TextOptions.TextFormattingMode="Ideal">
     <!--
-        First-run setup: welcome, microphone, languages, hotkey practice, done. Every step can be skipped.
+        First-run setup: welcome, microphone, languages, hotkey practice, AI model (optional), done. Every step can be skipped.
         Built from the same styles as the main window (App.xaml); one voice lead per step, the Continue button.
     -->
     <Window.Resources>
+        <!-- Control column of the AI step's rows (AiProviderPanel). -->
+        <GridLength x:Key="ControlColumn">280</GridLength>
         <Style x:Key="StepTitle" TargetType="TextBlock" BasedOn="{StaticResource DisplayLg}">
             <Setter Property="TextWrapping" Value="Wrap"/>
         </Style>
@@ -55,7 +58,7 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Header: the wordmark, and where you are in the five steps. -->
+        <!-- Header: the wordmark, and where you are in the six steps. -->
         <DockPanel Margin="48,32,48,0">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                 <TextBlock x:Name="StepCount" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,12,0"/>
@@ -181,7 +184,18 @@
                 </Border>
             </StackPanel>
 
-            <!-- 5. Done -->
+            <!-- 5. AI model, optional (AI providers: AiProviderPanel) -->
+            <ScrollViewer x:Name="StepAi" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" Margin="0,0,-20,0" Padding="0,0,20,0" Focusable="False">
+                <StackPanel Margin="0,0,0,24">
+                    <TextBlock Style="{StaticResource StepTitle}" Text="Add an AI model"/>
+                    <TextBlock Style="{StaticResource StepLead}" Text="Optional. With one, Murmur fixes grammar and the corrections you say aloud, and command mode, Ask and the hands-free commands work. Pick a provider, get a key from its site and paste it here."/>
+                    <Border Style="{StaticResource StepCard}">
+                        <local:AiProviderPanel x:Name="AiPanel"/>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- 6. Done -->
             <StackPanel x:Name="StepDone" Visibility="Collapsed">
                 <TextBlock Style="{StaticResource StepTitle}" Text="You are ready"/>
                 <TextBlock Style="{StaticResource StepLead}" Text="Murmur waits in the tray. Click into any text field, hold the hotkey and talk. A few more things worth knowing:"/>

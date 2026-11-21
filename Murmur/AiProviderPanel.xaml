@@ -1,0 +1,190 @@
+<UserControl x:Class="Murmur.AiProviderPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Murmur">
+    <!--
+        AI providers: pick a provider, follow its key guide, paste and test the key, choose a model.
+        Used in Settings (AI model card) and in the first-run setup (AI step). AiProviderPanel.xaml.cs saves as you go.
+    -->
+    <UserControl.Resources>
+        <local:NullToCollapsedConverter x:Key="NullToCollapsed"/>
+        <Style x:Key="PanelRow" TargetType="Grid">
+            <Setter Property="Margin" Value="0,16"/>
+            <Setter Property="MinHeight" Value="36"/>
+        </Style>
+        <Style x:Key="PanelRowText" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,24,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="PanelHelp" TargetType="TextBlock" BasedOn="{StaticResource Caption}">
+            <Setter Property="Margin" Value="0,2,0,0"/>
+        </Style>
+        <Style x:Key="PanelLine" TargetType="Border">
+            <Setter Property="Height" Value="1"/>
+            <Setter Property="Background" Value="{DynamicResource Line}"/>
+        </Style>
+
+        <!-- A provider card: a radio button drawn as a small flat card. The chosen one gets a caret mark and a stronger edge. -->
+        <Style x:Key="ProviderCard" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Margin" Value="0,0,8,8"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Bd" CornerRadius="10" Padding="12,10" MinHeight="62" BorderThickness="1"
+                                Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Line}" SnapsToDevicePixels="True">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <Rectangle x:Name="Caret" Width="3" Height="14" RadiusX="1.5" RadiusY="1.5" Fill="{DynamicResource Voice}"
+                                           VerticalAlignment="Top" Margin="0,3,8,0" Visibility="Collapsed"/>
+                                <ContentPresenter Grid.Column="1"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Hover}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource LineStrong}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SurfaceRaised}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource InkMuted}"/>
+                                <Setter TargetName="Caret" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- A model in the drop-down: name, tag and note in the open list; only the name in the closed box (the note shows beside it). -->
+        <DataTemplate x:Key="ModelItem" DataType="{x:Type local:AiModelChoice}">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <ContentControl Style="{StaticResource Tag}" Content="{Binding Tag}" Margin="8,0,0,0" Height="20">
+                        <ContentControl.Visibility>
+                            <MultiBinding Converter="{StaticResource NullToCollapsed}" FallbackValue="Collapsed">
+                                <Binding Path="Tag"/>
+                                <Binding RelativeSource="{RelativeSource AncestorType=ComboBoxItem}"/>
+                            </MultiBinding>
+                        </ContentControl.Visibility>
+                    </ContentControl>
+                </StackPanel>
+                <TextBlock Text="{Binding Note}" Style="{StaticResource Caption}" Margin="0,2,0,0" MaxWidth="380" HorizontalAlignment="Left">
+                    <TextBlock.Visibility>
+                        <MultiBinding Converter="{StaticResource NullToCollapsed}" FallbackValue="Collapsed">
+                            <Binding Path="Note"/>
+                            <Binding RelativeSource="{RelativeSource AncestorType=ComboBoxItem}"/>
+                        </MultiBinding>
+                    </TextBlock.Visibility>
+                </TextBlock>
+            </StackPanel>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <StackPanel>
+        <!-- Settings only: AI on or off. -->
+        <StackPanel x:Name="OffRow">
+            <Grid Style="{StaticResource PanelRow}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel Style="{StaticResource PanelRowText}">
+                    <TextBlock Style="{StaticResource Label}" Text="Use an AI model"/>
+                    <TextBlock x:Name="OffHelp" Style="{StaticResource PanelHelp}"/>
+                </StackPanel>
+                <CheckBox x:Name="UseAiBox" Grid.Column="1" VerticalAlignment="Center" Click="UseAi_Click" AutomationProperties.Name="Use an AI model"/>
+            </Grid>
+            <Border Style="{StaticResource PanelLine}"/>
+        </StackPanel>
+
+        <StackPanel x:Name="Body">
+            <!-- Provider cards -->
+            <TextBlock Style="{StaticResource Label}" Text="Provider" Margin="0,16,0,10"/>
+            <ItemsControl x:Name="ProviderCards" Margin="0,0,-8,0" KeyboardNavigation.TabNavigation="Once">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><UniformGrid Columns="3"/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+            </ItemsControl>
+
+            <!-- Guide for the chosen provider -->
+            <Border Background="{DynamicResource SurfaceSunken}" CornerRadius="10" Padding="20,16" Margin="0,8,0,16">
+                <StackPanel>
+                    <TextBlock x:Name="AboutText" Style="{StaticResource Body}"/>
+                    <TextBlock Style="{StaticResource Overline}" Text="HOW TO GET A KEY" Margin="0,16,0,8"
+                               Visibility="{Binding Visibility, ElementName=KeyPageButton}"/>
+                    <TextBlock x:Name="CustomStepsLabel" Style="{StaticResource Overline}" Text="HOW TO SET IT UP" Margin="0,16,0,8"/>
+                    <ItemsControl x:Name="StepsList" Focusable="False">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="22"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Number}" FontFamily="{StaticResource FontMono}" FontSize="12" Foreground="{DynamicResource InkMuted}" Margin="0,2,0,0"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding Text}" Style="{StaticResource Body}"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button x:Name="KeyPageButton" Content="Open the key page" Click="KeyPage_Click"/>
+                        <TextBlock x:Name="KeyPageText" Style="{StaticResource Caption}" FontFamily="{StaticResource FontMono}" VerticalAlignment="Center" Margin="12,0,0,0"
+                                   Visibility="{Binding Visibility, ElementName=KeyPageButton}"/>
+                    </StackPanel>
+                    <TextBlock x:Name="NoteText" Style="{StaticResource Caption}" Margin="0,12,0,0"/>
+                    <TextBlock Style="{StaticResource Overline}" Text="WHAT MURMUR SENDS" Margin="0,16,0,6"/>
+                    <TextBlock x:Name="PrivacyText" Style="{StaticResource Caption}"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Custom only: the address -->
+            <StackPanel x:Name="AddressRow">
+                <Grid Style="{StaticResource PanelRow}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                    <StackPanel Style="{StaticResource PanelRowText}">
+                        <TextBlock Style="{StaticResource Label}" Text="API address"/>
+                        <TextBlock Style="{StaticResource PanelHelp}" Text="Any OpenAI-compatible service. To stay on this PC, use Ollama at http://localhost:11434/v1"/>
+                    </StackPanel>
+                    <TextBox x:Name="AddressBox" Grid.Column="1" VerticalAlignment="Center" LostFocus="Address_LostFocus" AutomationProperties.Name="AI API address"/>
+                </Grid>
+                <Border Style="{StaticResource PanelLine}"/>
+            </StackPanel>
+
+            <!-- Key and Test -->
+            <Grid Style="{StaticResource PanelRow}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                <StackPanel Style="{StaticResource PanelRowText}">
+                    <TextBlock Style="{StaticResource Label}" Text="API key"/>
+                    <TextBlock x:Name="KeyHelp" Style="{StaticResource PanelHelp}" Text="Stored encrypted for your Windows account."/>
+                </StackPanel>
+                <Grid Grid.Column="1" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <PasswordBox x:Name="KeyBox" VerticalAlignment="Center" PasswordChanged="Key_Changed" LostFocus="Key_LostFocus" AutomationProperties.Name="AI API key"/>
+                    <Button x:Name="TestButton" Grid.Column="1" Margin="8,0,0,0" Padding="14,0" Content="Test" Click="Test_Click" AutomationProperties.Name="Test the key"/>
+                </Grid>
+            </Grid>
+            <StackPanel x:Name="KeyStatus" Orientation="Horizontal" Margin="0,-8,0,12">
+                <ContentControl x:Name="KeyTag" Style="{StaticResource Tag}" Margin="0,0,8,0"/>
+                <TextBlock x:Name="KeyMessage" Style="{StaticResource Caption}" VerticalAlignment="Center" MaxWidth="560"/>
+            </StackPanel>
+            <TextBlock x:Name="KeyWarning" Style="{StaticResource Caption}" Margin="0,-8,0,12"/>
+            <Border Style="{StaticResource PanelLine}"/>
+
+            <!-- Model -->
+            <Grid Style="{StaticResource PanelRow}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="{DynamicResource ControlColumn}"/></Grid.ColumnDefinitions>
+                <StackPanel Style="{StaticResource PanelRowText}">
+                    <TextBlock Style="{StaticResource Label}" Text="Model"/>
+                    <TextBlock x:Name="ModelNote" Style="{StaticResource PanelHelp}"/>
+                    <TextBlock x:Name="ModelHelp" Style="{StaticResource PanelHelp}"/>
+                </StackPanel>
+                <Grid Grid.Column="1" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <ComboBox x:Name="ModelBox" ItemTemplate="{StaticResource ModelItem}" SelectionChanged="Model_Changed" AutomationProperties.Name="AI model"/>
+                    <TextBox x:Name="CustomModelBox" LostFocus="CustomModel_LostFocus" AutomationProperties.Name="AI model name" Visibility="Collapsed"/>
+                    <Button x:Name="RefreshButton" Grid.Column="1" Style="{StaticResource BtnIcon}" Width="32" Height="32" Margin="4,0,0,0" Content="&#xE72C;"
+                            Click="Refresh_Click" ToolTip="Load the models your key can use" AutomationProperties.Name="Refresh the model list"/>
+                </Grid>
+            </Grid>
+        </StackPanel>
+    </StackPanel>
+</UserControl>

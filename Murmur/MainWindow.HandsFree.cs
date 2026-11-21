@@ -18,6 +18,8 @@ public partial class MainWindow
         ScreenOcrHelp.Text = "When a window has too little text, such as a scan or an image, Windows reads the picture on this PC. " +
             (installed.Count > 0 ? $"Installed here: {string.Join(", ", installed)}." : "No reading languages are installed: add one under Windows Settings › Time & language › Language.");
         RefreshHandsFreeRows();
+        RefreshVisionHelp();
+        AiPanel.Changed += RefreshVisionHelp; // AI providers: the hint follows the provider
         // Developer aid for screenshots: --show-handsfree scrolls Settings to this section.
         if (Environment.GetCommandLineArgs().Contains("--show-handsfree"))
             Loaded += (_, _) => Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
@@ -25,6 +27,16 @@ public partial class MainWindow
                 var top = HandsFreeHeading.TranslatePoint(new Point(0, 0), PageSettings);
                 PageSettings.ScrollToVerticalOffset(PageSettings.VerticalOffset + top.Y - 24);
             });
+    }
+
+    /// <summary>AI providers: name a model of the chosen provider that reads pictures.</summary>
+    private void RefreshVisionHelp()
+    {
+        var p = AiConfig.Provider(S);
+        var vision = p?.Models.FirstOrDefault(m => m.Vision);
+        ScreenVisionModelHelp.Text = vision != null
+            ? $"Empty means none. With {p!.Name}, {vision.Id} reads pictures."
+            : "Empty means none. Check your provider’s current model list.";
     }
 
     /// <summary>The rows below the main switch only matter when it is on; the model name only with the vision switch.</summary>

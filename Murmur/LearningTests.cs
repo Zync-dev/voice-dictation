@@ -425,7 +425,7 @@ public static class LearningTests
 
         using var transcriber = new Transcriber(settings);
         if (settings.Engine == SttEngine.Local) { await transcriber.EnsureLocalModelAsync(); await transcriber.EnsureDetectorAsync(); }
-        lines.Add($"engine {settings.Engine} {(settings.Engine == SttEngine.Local ? settings.LocalModel : settings.CloudSttModel)}, languages da+en");
+        lines.Add($"engine {settings.Engine} {(settings.Engine == SttEngine.Local ? settings.LocalModel : CloudStt.ModelName(settings))}, languages da+en");
 
         var files = Directory.GetFiles(folder, "*.wav", SearchOption.AllDirectories)
             .Select(f => (Name: Path.GetFileNameWithoutExtension(f).Replace("-raw", ""), Path: f))

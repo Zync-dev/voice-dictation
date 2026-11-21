@@ -154,7 +154,7 @@ public sealed partial class Transcriber
         IProgress<FileProgress>? progress, CancellationToken ct)
     {
         bool cloud = _settings.Engine == SttEngine.Cloud;
-        if (cloud && string.IsNullOrEmpty(Secret.Unprotect(_settings.CloudSttKeyProtected)))
+        if (cloud && string.IsNullOrEmpty(CloudStt.Resolve(_settings).Key))
             throw new InvalidOperationException("Cloud transcription needs an API key (Settings).");
 
         using var source = await Task.Run(() => AudioFileSource.Open(path), ct);
@@ -216,7 +216,7 @@ public sealed partial class Transcriber
             progress?.Report(new FileProgress(source.Progress, found, Describe(spoken)));
         }
         string? languages = Describe(spoken);
-        Log.Write($"File transcribed: {source.Duration.TotalSeconds:0}s audio, {all.Count} segments, {(cloud ? "cloud " + _settings.CloudSttModel : "model " + _settings.LocalModel)}, language {languages ?? "unknown"}, {watch.Elapsed.TotalSeconds:0.0}s");
+        Log.Write($"File transcribed: {source.Duration.TotalSeconds:0}s audio, {all.Count} segments, {(cloud ? "cloud " + CloudStt.ModelName(_settings) : "model " + _settings.LocalModel)}, language {languages ?? "unknown"}, {watch.Elapsed.TotalSeconds:0.0}s");
         return new FileTranscript(all, languages, source.Duration);
     }
 
@@ -321,7 +321,7 @@ public sealed partial class Transcriber
 
     private async Task<(List<FileSegment> Segments, string? Language)> CloudFileChunkAsync(float[] chunk, TimeSpan offset, string language, string prompt, CancellationToken ct)
     {
-        var key = Secret.Unprotect(_settings.CloudSttKeyProtected);
+        var stt = CloudStt.Resolve(_settings);
         byte[] wav = AudioRecorder.ToWav(chunk);
         double seconds = chunk.Length / (double)AudioRecorder.SampleRate;
         bool auto = language == "auto";
@@ -332,13 +332,9 @@ public sealed partial class Transcriber
             var file = new ByteArrayContent(wav);
             file.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
             form.Add(file, "file", "audio.wav");
-            form.Add(new StringContent(_settings.CloudSttModel), "model");
-            form.Add(new StringContent(timestamps ? "verbose_json" : "json"), "response_format");
-            if (timestamps) form.Add(new StringContent("segment"), "timestamp_granularities[]");
-            if (!auto) form.Add(new StringContent(language), "language");
-            if (!string.IsNullOrWhiteSpace(prompt)) form.Add(new StringContent(prompt), "prompt");
-            using var request = new HttpRequestMessage(HttpMethod.Post, Http.Join(_settings.CloudSttBaseUrl, "audio/transcriptions")) { Content = form };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+            CloudStt.AddFields(form, stt, timestamps ? "verbose_json" : "json", auto ? null : language, prompt, segmentTimestamps: timestamps);
+            using var request = new HttpRequestMessage(HttpMethod.Post, Http.Join(stt.BaseUrl, "audio/transcriptions")) { Content = form };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", stt.Key);
             return await Http.Client.SendAsync(request, token);
         }
 
@@ -366,7 +362,7 @@ public sealed partial class Transcriber
             using (response)
             {
                 var json = await Http.ReadJsonAsync(response);
-                string? heard = auto ? json["language"]?.GetValue<string>() : language;
+                string? heard = auto ? CloudStt.ReportedLanguage(json) : language;
                 var list = new List<FileSegment>();
                 if (timed && json["segments"] is JsonArray segments)
                 {
