@@ -22,6 +22,7 @@ public static class TaskTests
 {
     public static bool TryRun(Application app, string[] args)
     {
+        if (args.Length >= 1 && args[0] == "--outlookhost") { OutlookHost.Run(args); return true; }
         if (args.Length == 2 && args[0] == "--tasktest") { _ = Finish(app, args[1]); return true; }
         if (args.Length == 1 && args[0].StartsWith("--task-demo"))
         {
@@ -197,6 +198,44 @@ public static class TaskTests
         }
         foreach (var (said, want) in new[] { ("svarfeltet", "reply"), ("i noterne", "notes"), ("the message box", "message"), ("søgefeltet", "search"), ("Notes", "notes") })
             Check(lines, TaskRunner.FieldName(said) == want, $"field [{said}] => [{TaskRunner.FieldName(said)}]");
+
+        // Rows as new Outlook names them ("Unread, Sender, Subject, time, preview"), a folder first, and rows whose name is
+        // only the sender with the rest in their parts (Clickable.Detail, as UiControl.Scan puts it together).
+        var rows = new List<UiControl.Clickable> { new("Inbox", "TreeItem", "", null!, 0), new("MyProtein", "TreeItem", "", null!, 1) };
+        foreach (var n in new[]
+        {
+            "Unread, MyProtein, Your order has shipped, 10:32, Hi Lukas, your order 88213 is on its way",
+            "Unread, Daniel Hansen, Re: Tilbud på dashboard, 09:58, Hej Lukas, tak for tilbuddet",
+            "Mette Sørensen, Møde torsdag, 09:15, Kan vi mødes torsdag",
+            "Myprotein, 20% off everything this weekend, 18-11-2026, Our biggest sale",
+            "Daniel Hansen, Frokost fredag, 16-11-2026, Skal vi tage frokost",
+        })
+            rows.Add(new UiControl.Clickable(n, "ListItem", "", null!, rows.Count));
+        rows.Add(new UiControl.Clickable("James Carter", "ListItem", "", null!, rows.Count, Detail: "James Carter, Quarterly review, 14-11-2026, Could you send me the slides"));
+        foreach (var (said, want) in new[]
+        {
+            ("the latest mail from MyProtein", "Your order has shipped"), ("the recent email from MyProtein", "Your order has shipped"),
+            ("den seneste mail fra my protein", "Your order has shipped"), ("mailen fra Myprotin", "Your order has shipped"),
+            ("the email from Daniel", "Re: Tilbud"), ("mailen fra Daniel om frokost", "Frokost fredag"), ("mailen fra Mette Sorensen", "Møde torsdag"),
+            ("the latest email", "Your order has shipped"), ("nyeste mail", "Your order has shipped"), ("mailen fra James om quarterly review", "James Carter"),
+            ("the newsletter from Netflix", ""), ("Inbox", "Inbox"),
+        })
+        {
+            string got = TaskRunner.ItemByWords(said, rows)?.Text ?? "";
+            Check(lines, want.Length == 0 ? got.Length == 0 : got.Contains(want), $"Outlook-style row for [{said}] => [{TaskPlanner.Short(got, 60)}]");
+        }
+        var partial = ItemFinder.Match("mailen fra Daniel om kontrakten", rows);
+        Check(lines, partial.Best == null && partial.Partial.Count == 2, $"[mailen fra Daniel om kontrakten]: no row has both words, two have one ({partial.Partial.Count})");
+        foreach (var (said, want) in new[] { ("mailen fra Peter om kontrakten", "peter"), ("the latest mail from MyProtein", "myprotein"), ("find the email from Hanne Lund about holidays", "hanne lund"), ("mailen om fakturaen", "fakturaen") })
+            Check(lines, ItemFinder.SearchWords(said) == want, $"search words for [{said}] => [{ItemFinder.SearchWords(said)}]");
+        Check(lines, ScreenReader.Pretty("olk") == "Outlook" && ScreenReader.Pretty("OUTLOOK") == "Outlook" && ScreenReader.Friendly("Microsoft Outlook") == "Outlook" && ScreenReader.Pretty("slack") == "Slack",
+            $"app names: olk => {ScreenReader.Pretty("olk")}, Microsoft Outlook => {ScreenReader.Friendly("Microsoft Outlook")}");
+        Check(lines, ItemFinder.IsMailApp("olk", "") && ItemFinder.IsMailApp("msedge", "Mail - Lukas - Outlook") && ItemFinder.IsMailApp("chrome", "Inbox (3) - lukas@example.com - Gmail") && !ItemFinder.IsMailApp("notepad", "notes.txt"),
+            "mail apps: new Outlook, Outlook on the web, Gmail; not Notepad");
+        var w = P("""{"steps":[{"tool":"open_app","args":{"app":"Outlook"}},{"tool":"wait_for_window","args":{"window":"Outlook"}},{"tool":"open_item","args":{"description":"the email from Daniel"}}]}""", "åbn outlook og find mailen fra daniel");
+        Check(lines, Tools(w.Plan) == "open_app, open_item" && w.Plan!.Dropped.Any(x => x.StartsWith("wait_for_window")), $"a wait for the app just opened is left out (open_app waits itself): {Tools(w.Plan)}");
+        var w2 = P("""{"steps":[{"tool":"open_app","args":{"app":"Outlook"}},{"tool":"wait_for_window","args":{"window":"Kalender"}},{"tool":"click","args":{"target":"Ny"}}]}""", "åbn outlook vent på kalenderen og klik ny");
+        Check(lines, Tools(w2.Plan) == "open_app, wait_for_window, click", $"a wait for another window stays: {Tools(w2.Plan)}");
     }
 
     // ---------- the test windows ----------
@@ -542,6 +581,8 @@ public static class TaskTests
                 Check(lines, run?.Outcome == "timeout" && (await Clicks()).Length == 0 && overlay.CardText.Contains("longer than 2 seconds"), $"the time limit stops the task [{overlay.CardText}]");
             }
             TaskRunner.WorkLimit = TimeSpan.FromMinutes(2);
+
+            await OutlookLikeAsync(lines, hf, overlay, settings, control, Plan, Say, Done, Steps, SaveCard);
             TaskPlanner.TestPlan = null;
             TaskRunner.NoAiPick = false;
 
@@ -704,6 +745,270 @@ public static class TaskTests
             await mail.Quit();
             if (second is { HasExited: false }) try { second.Kill(); } catch { }
             overlay.Close();
+        }
+    }
+
+    // ---------- a mail client like new Outlook ----------
+
+    /// <summary>
+    /// The checks' fake new Outlook (<c>--outlookhost</c>, its own process): opened by a task and slow to show its list,
+    /// rows named "Unread, Sender, Subject, time, preview" or only by their parts, a hang right when the task looks, the
+    /// app's own search (by the box's name and by Alt+Q), and a mail that is nowhere. Then the same as a web page in Edge,
+    /// with a throw-away profile, when Edge is installed (MURMUR_TASKTEST_EDGE=0 skips it). With the AI model, one spoken
+    /// task: open the app, find the newest mail from a sender and reply.
+    /// </summary>
+    private static async Task OutlookLikeAsync(List<string> lines, HandsFree hf, OverlayWindow overlay, AppSettings settings, TestWindow control,
+        Func<string, IntPtr, string, Task<TaskRun?>> plan, Func<string, IntPtr, string, Task> say, Func<TaskRun, int, Task> done,
+        Func<(string, string, string)[], TaskPlan> steps, Action<string> saveCard)
+    {
+        lines.Add("== a mail client like new Outlook (slow start, rows named as Outlook names them, its own search) ==");
+        TaskRunner.NoAiPick = true;
+        TaskPlan? next = null;
+        TaskPlanner.TestPlan = _ => next;
+        var keepRunning = AppCatalog.FakeRunning;
+        ReplyTargets.Known.Add(new ReplyTargets.Target("Murmur test outlook", a => a.Title.StartsWith("Murmur test outlook", StringComparison.Ordinal), (ushort)Native.VK_CONTROL, (ushort)'R', "Ctrl+R"));
+        SendTargets.Known.Add(new SendTargets.Target("Murmur test outlook", a => a.Title.StartsWith("Murmur test outlook", StringComparison.Ordinal), (ushort)Native.VK_CONTROL, "Ctrl+Enter"));
+        var started = new List<Process>();
+
+        // Opens the fake Outlook the way open_app does (the only app these checks start); the list of open windows learns
+        // about it once its window is up, as the real one would.
+        TestWindow? launched = null;
+        async Task<TestWindow?> LaunchedAsync(int ms)
+        {
+            var w = Stopwatch.StartNew();
+            while (launched == null && w.ElapsedMilliseconds < ms) await Task.Delay(100);
+            return launched;
+        }
+        void Installable(string args)
+        {
+            launched = null;
+            AppCatalog.FakeInstalled = [new AppEntry("Murmur test outlook", "test", Environment.ProcessPath!) { Args = args }];
+            AppCatalog.FakeRunning = [];
+            AppCatalog.TestLaunch = app =>
+            {
+                var p = Process.Start(new ProcessStartInfo(app.Target, app.Args) { UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true })!;
+                started.Add(p);
+                AllowSetForegroundWindow(p.Id);
+                _ = Task.Run(async () =>
+                {
+                    var ready = (await p.StandardOutput.ReadLineAsync() ?? "").Split(' ');
+                    if (ready.Length < 2) return;
+                    var hwnd = (IntPtr)long.Parse(ready[1]);
+                    await Application.Current.Dispatcher.InvokeAsync(() =>
+                    {
+                        launched = new TestWindow(p, hwnd);
+                        AppCatalog.FakeRunning = [new AppEntry("Murmur test outlook", "window", "", hwnd, "Murmur", "Murmur test outlook - Inbox")];
+                    });
+                });
+                return true;
+            };
+        }
+        async Task<JsonElement> StateOf(TestWindow w) => await w.State();
+
+        try
+        {
+            // 1. Open the app (cold start: the list comes 3.5 s after the window) and open the newest mail from a sender.
+            Installable("--outlookhost --slow=3500");
+            next = steps([("open_app", "app", "Murmur test outlook"), ("wait_for_window", "window", "Murmur test outlook"), ("open_item", "description", "the latest mail from MyProtein")]);
+            if (await control.Front("list"))
+            {
+                var run = await plan("Åbn Murmur test outlook og find den seneste mail fra MyProtein", control.Hwnd, "da");
+                Check(lines, run != null && run.Plan.Steps.Count == 2 && run.Plan.Dropped.Any(d => d.StartsWith("wait_for_window")), $"O1: the wait right after opening the app is left out ({string.Join(", ", run?.Plan.Steps.Select(s => s.Tool) ?? [])})");
+                await say("Kør", control.Hwnd, "da");
+                if (run != null) await done(run, 60000);
+                var outlook = await LaunchedAsync(3000);
+                lines.Add($"      fake Outlook pid {outlook?.Process.Id}, control pid {control.Process.Id}, this pid {Environment.ProcessId}");
+                var st = outlook != null ? await StateOf(outlook) : default;
+                Check(lines, run?.Outcome == "done" && outlook != null && st.GetProperty("opened").GetString() == "Your order has shipped",
+                    $"O1: opened the app, waited for its list and opened the newest MyProtein mail [{(outlook != null ? st.GetProperty("opened").GetString() : "no window")}] ({run?.Outcome})");
+                Check(lines, TaskRunner.CardLog!.Any(s => s.Contains("to load")), "O1: the card said it was waiting for the app to load");
+                Check(lines, outlook != null && !st.GetProperty("keys").EnumerateArray().Any(k => k.GetString() is "Return" or "Ctrl+Return") && !st.GetProperty("sent").GetBoolean(), "O1: no Enter, nothing sent");
+                await Task.Delay(300);
+                saveCard("outlook-open");
+
+                // 2. The same window: a mail that is not in view, found with the app's search box (found by its name).
+                if (outlook != null && await outlook.Front("list"))
+                {
+                    await outlook.Send("reset");
+                    next = steps([("open_item", "description", "the email from Hanne about the holiday plan")]);
+                    var run2 = await plan("Find mailen fra Hanne om ferieplanen og opsummer den", outlook.Hwnd, "da");
+                    await say("Kør", outlook.Hwnd, "da");
+                    if (run2 != null) await done(run2, 40000);
+                    var st2 = await StateOf(outlook);
+                    var searches = st2.GetProperty("searches").EnumerateArray().Select(s => s.GetString()).ToList();
+                    var keys2 = st2.GetProperty("keys").EnumerateArray().Select(k => k.GetString()).ToList();
+                    Check(lines, run2?.Outcome == "done" && st2.GetProperty("opened").GetString() == "Ferieplan" && searches.SequenceEqual(["hanne"]) && !keys2.Contains("Alt+Q") && !st2.GetProperty("enterElsewhere").GetBoolean(),
+                        $"O2: not in view, so searched “{string.Join(", ", searches)}” in the box called Search and opened [{st2.GetProperty("opened").GetString()}] by {TaskRunner.LastHow} ({run2?.Outcome}; keys {string.Join(" ", keys2)})");
+
+                    // 3. Nowhere at all: the search finds nothing and the step fails; nothing else is done.
+                    await outlook.Send("reset");
+                    next = steps([("open_item", "description", "the email from Nobody Special"), ("reply", "instructions", "ja tak")]);
+                    var run3 = await plan("Find mailen fra Nobody Special og svar ja tak", outlook.Hwnd, "da");
+                    await say("Kør", outlook.Hwnd, "da");
+                    if (run3 != null) await done(run3, 40000);
+                    var st3 = await StateOf(outlook);
+                    Check(lines, run3?.Outcome == "failed" && run3.FailedStep == 1 && overlay.CardText.Contains("Found nothing like") && st3.GetProperty("opened").GetString() == "" && !st3.GetProperty("replyOpen").GetBoolean() && !st3.GetProperty("sent").GetBoolean(),
+                        $"O3: a mail that is nowhere: searched, then the step fails and the reply never runs [{overlay.CardText}]");
+                    Check(lines, overlay.CardText.Contains("Murmur") && !overlay.CardText.Contains("Olk"), "O3: the card names the app by its name");
+                }
+            }
+
+            // 4. Rows that have no name, only parts (sender, subject, time, preview), and a search box with no name (Alt+Q).
+            var parts = await TestWindow.StartAsync("--outlookhost --parts --slow=2500");
+            started.Add(parts.Process);
+            lines.Add($"      fake Outlook with parts: pid {parts.Process.Id}");
+            var partsEntry = new AppEntry("Murmur test outlook", "window", "", parts.Hwnd, "Murmur", "Murmur test outlook - Inbox");
+            AppCatalog.FakeRunning = [partsEntry];
+            if (await parts.Front("list"))
+            {
+                next = steps([("open_item", "description", "mailen fra Daniel om tilbuddet")]);
+                var run = await plan("Find mailen fra Daniel om tilbuddet og opsummer den", parts.Hwnd, "da");
+                await say("Kør", parts.Hwnd, "da");
+                if (run != null) await done(run, 40000);
+                var st = await StateOf(parts);
+                Check(lines, run?.Outcome == "done" && st.GetProperty("opened").GetString() == "Re: Tilbud på dashboard",
+                    $"O4: rows named only by their parts, list 2.5 s late: opened [{st.GetProperty("opened").GetString()}] ({run?.Outcome}; {string.Join(" | ", run?.Log ?? [])})");
+
+                // 5. Not in view, a search box with no name: Alt+Q, as in new Outlook, then the top result that fits.
+                await parts.Send("reset");
+                if (await parts.Front("list"))
+                {
+                    next = steps([("open_item", "description", "mailen fra Peter om kontrakten")]);
+                    var run6 = await plan("Find mailen fra Peter om kontrakten og opsummer den", parts.Hwnd, "da");
+                    await say("Kør", parts.Hwnd, "da");
+                    if (run6 != null) await done(run6, 40000);
+                    var st6 = await StateOf(parts);
+                    var keys6 = st6.GetProperty("keys").EnumerateArray().Select(k => k.GetString()).ToList();
+                    var searches6 = st6.GetProperty("searches").EnumerateArray().Select(s => s.GetString()).ToList();
+                    Check(lines, run6?.Outcome == "done" && st6.GetProperty("opened").GetString() == "Kontrakt 2025, endelig udgave" && keys6.Contains("Alt+Q") && searches6.SequenceEqual(["peter"]) && !st6.GetProperty("enterElsewhere").GetBoolean(),
+                        $"O5: Alt+Q, searched “{string.Join(", ", searches6)}”, opened the newest that fits [{st6.GetProperty("opened").GetString()}] ({run6?.Outcome}; keys {string.Join(" ", keys6)})");
+                    await Task.Delay(300);
+                    saveCard("outlook-search");
+                }
+
+                // 6. The app hangs (its UI thread is busy for 5 s) right when the step looks: asked again, not "did not answer". Last,
+                // as a window that hung can leave Windows' "not responding" ghost in front for a while.
+                await parts.Send("reset");
+                next = steps([("open_item", "description", "the email from Mette")]);
+                var run5 = await plan("Find mailen fra Mette og opsummer den", parts.Hwnd, "da");
+                int unanswered = TaskRunner.Unanswered;
+                await parts.Send("busy 5000");
+                await say("Kør", parts.Hwnd, "da");
+                if (run5 != null) await done(run5, 40000);
+                var st5 = await StateOf(parts);
+                Check(lines, run5?.Outcome == "done" && st5.GetProperty("opened").GetString() == "Møde torsdag" && TaskRunner.Unanswered > unanswered,
+                    $"O6: the app hung for 5 s: {TaskRunner.Unanswered - unanswered} looks not answered, asked again and opened [{st5.GetProperty("opened").GetString()}] ({run5?.Outcome}; {string.Join(" | ", run5?.Log ?? [])})");
+            }
+
+            // 7. The same mail client as a web page in Edge (Chromium, as new Outlook's WebView2 is).
+            await EdgeAsync(lines, hf, overlay, plan, say, done, steps, n => next = n);
+
+            // 8. With the AI model: one spoken task, planned and run, from a cold start.
+            bool ai = hf.Llm.IsConfigured && Environment.GetEnvironmentVariable("MURMUR_TASKTEST_AI") != "0";
+            if (ai)
+            {
+                TaskPlanner.TestPlan = null;
+                TaskRunner.NoAiPick = false;
+                Installable("--outlookhost --slow=3000");
+                if (await control.Front("list"))
+                {
+                    int calls = TaskRunner.AiCalls;
+                    var run = await plan("Åbn Murmur test outlook og find den seneste mail fra MyProtein og svar at jeg gerne vil returnere varen", control.Hwnd, "da");
+                    var p = TaskIntent.LastPlan;
+                    Check(lines, p != null && p.Steps.Any(s => s.Tool == "open_app") && p.Steps.Any(s => s.Tool == "open_item") && p.Steps.Any(s => s.Tool == "reply") && !p.Steps.Any(s => s.Tool == "send"),
+                        $"O8 (AI): the plan opens the app, finds the mail and replies, without sending [{(p == null ? TaskIntent.LastError : string.Join(" | ", p.Steps.Select(s => s.Describe())))}]");
+                    if (run != null)
+                    {
+                        await say("Ja", control.Hwnd, "da");
+                        await done(run, 90000);
+                        var outlook = await LaunchedAsync(2000);
+                        var st = outlook != null ? await StateOf(outlook) : default;
+                        string reply = outlook != null ? st.GetProperty("reply").GetString() ?? "" : "";
+                        lines.Add("      reply: " + reply.Replace("\n", " / "));
+                        Check(lines, run.Outcome == "done" && outlook != null && st.GetProperty("opened").GetString() == "Your order has shipped" && reply.Length > 10 && !st.GetProperty("sent").GetBoolean(),
+                            $"O8 (AI): from a cold start, opened the newest MyProtein mail and put a reply in the reply box, not sent ({run.Outcome}; {TaskRunner.AiCalls - calls} AI calls)");
+                    }
+                }
+            }
+            else lines.Add("SKIP  O8: the AI task in the fake Outlook (no AI model, or MURMUR_TASKTEST_AI=0)");
+        }
+        finally
+        {
+            AppCatalog.TestLaunch = null;
+            AppCatalog.FakeInstalled = [];
+            AppCatalog.FakeRunning = keepRunning;
+            if (launched != null) await launched.Quit();
+            foreach (var p in started) { try { if (!p.HasExited) { p.StandardInput.WriteLine("quit"); if (!p.WaitForExit(3000)) p.Kill(); } } catch { } }
+        }
+    }
+
+    /// <summary>
+    /// The web page from OutlookHost.WebPage in Edge: its own throw-away profile in the test data folder (never the user's),
+    /// an app window, the list 3 s after the page. The page's title says what was opened and searched. Edge is closed after.
+    /// </summary>
+    private static async Task EdgeAsync(List<string> lines, HandsFree hf, OverlayWindow overlay,
+        Func<string, IntPtr, string, Task<TaskRun?>> plan, Func<string, IntPtr, string, Task> say, Func<TaskRun, int, Task> done,
+        Func<(string, string, string)[], TaskPlan> steps, Action<TaskPlan> setNext)
+    {
+        string edge = new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"Microsoft\Edge\Application\msedge.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"Microsoft\Edge\Application\msedge.exe"),
+        }.FirstOrDefault(File.Exists) ?? "";
+        if (edge.Length == 0 || Environment.GetEnvironmentVariable("MURMUR_TASKTEST_EDGE") == "0") { lines.Add("SKIP  O7: the web page in Edge (no Edge, or MURMUR_TASKTEST_EDGE=0)"); return; }
+        string folder = Path.Combine(AppSettings.DataDir, "edge-test");
+        string profile = Path.Combine(folder, "profile-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(profile);
+        string page = Path.Combine(folder, "mail.html");
+        File.WriteAllText(page, OutlookHost.WebPage());
+        string url = new Uri(page).AbsoluteUri + "?delay=3000";
+        var keep = AppCatalog.FakeRunning;
+        Process? browser = null;
+        try
+        {
+            browser = Process.Start(new ProcessStartInfo(edge, $"--user-data-dir=\"{profile}\" --no-first-run --no-default-browser-check --disable-sync --disable-extensions --window-size=1100,700 --window-position=120,80 --app=\"{url}\"") { UseShellExecute = false });
+            // Its window, found among the real open windows by the page's title (and owned by this Edge's own processes).
+            IntPtr hwnd = IntPtr.Zero;
+            var w = Stopwatch.StartNew();
+            while (hwnd == IntPtr.Zero && w.ElapsedMilliseconds < 20000)
+            {
+                await Task.Delay(300);
+                AppCatalog.FakeRunning = null;
+                var win = AppCatalog.Running().FirstOrDefault(a => a.Process.Equals("msedge", StringComparison.OrdinalIgnoreCase) && a.Title.StartsWith("Murmur web mail", StringComparison.Ordinal));
+                AppCatalog.FakeRunning = keep;
+                if (win != null) hwnd = win.Window;
+            }
+            if (hwnd == IntPtr.Zero) { Check(lines, false, "O7: Edge's window with the test page did not come up"); return; }
+            AppCatalog.FakeRunning = [new AppEntry("Murmur web mail", "window", "", hwnd, "msedge", ScreenReader.WindowTitle(hwnd))];
+            lines.Add($"      Edge window up after {w.ElapsedMilliseconds}ms; app name [{ScreenReader.AppName(hwnd)}]");
+            if (!await WindowControl.FocusAsync(hwnd)) { Check(lines, false, "O7: Edge's window could not be brought to the front"); return; }
+
+            // a. Right away, while the page is still empty and Chromium is still building its UI Automation tree.
+            setNext(steps([("open_item", "description", "the latest mail from MyProtein")]));
+            var run = await plan("Find den seneste mail fra MyProtein og opsummer den", hwnd, "da");
+            await say("Kør", hwnd, "da");
+            if (run != null) await done(run, 40000);
+            string title = ScreenReader.WindowTitle(hwnd);
+            Check(lines, run?.Outcome == "done" && title.Contains("opened: Your order has shipped"),
+                $"O7a: Edge, list 3 s late: opened the newest MyProtein mail [{title}] by {TaskRunner.LastHow} ({run?.Outcome}; {string.Join(" | ", run?.Log ?? [])})");
+
+            // b. Not in view: the page's search box (by its name), Enter there only, then the result.
+            await WindowControl.FocusAsync(hwnd);
+            setNext(steps([("open_item", "description", "mailen fra Peter om kontrakten")]));
+            var run2 = await plan("Find mailen fra Peter om kontrakten og opsummer den", hwnd, "da");
+            await say("Kør", hwnd, "da");
+            if (run2 != null) await done(run2, 40000);
+            title = ScreenReader.WindowTitle(hwnd);
+            Check(lines, run2?.Outcome == "done" && title.Contains("searched: peter") && title.Contains("opened: Kontrakt 2025, endelig udgave"),
+                $"O7b: Edge: searched and opened [{title}] by {TaskRunner.LastHow} ({run2?.Outcome}; {string.Join(" | ", run2?.Log ?? [])})");
+        }
+        finally
+        {
+            AppCatalog.FakeRunning = keep;
+            // Only the checks' own Edge: the process they started, with its own profile, and the processes it started.
+            try { if (browser is { HasExited: false }) browser.Kill(entireProcessTree: true); } catch { }
+            await Task.Delay(1500);
+            try { Directory.Delete(profile, true); } catch (Exception ex) { lines.Add("      (the throw-away Edge profile was not removed: " + ex.Message + ")"); }
         }
     }
 

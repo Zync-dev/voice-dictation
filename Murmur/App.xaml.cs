@@ -62,6 +62,7 @@ public partial class App : Application
         if (ControlTests.TryRun(this, e.Args)) return; // Hands-free computer control: --controltest (ControlTests.cs)
         if (EditSpeakTests.TryRun(this, e.Args)) return; // edit-speak: --edittest, --speaktest (EditSpeakTests.cs)
         if (TaskTests.TryRun(this, e.Args)) return; // Hands-free: multi-step tasks: --tasktest, --task-demo (TaskTests.cs)
+        if (UiaShape.TryRun(this, e.Args)) return; // --uia-shape <process> out.txt: an app's UI Automation tree, its shape only (UiaShape.cs)
 
         if (e.Args.Length == 3 && e.Args[0] == "--eval")
         {

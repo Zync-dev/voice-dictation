@@ -93,8 +93,38 @@ public static partial class ScreenReader
     public static bool IsExcluded(string process, AppSettings s) =>
         process.Length > 0 && ContextAssist.ExcludedNames(s.ExcludedApps).Any(n => process.Equals(n, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>The names people know for processes whose exe name is not the app's name ("olk" is the new Outlook).</summary>
+    private static readonly Dictionary<string, string> KnownNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["olk"] = "Outlook", ["outlook"] = "Outlook", ["hxoutlook"] = "Mail", ["msedge"] = "Edge", ["chrome"] = "Chrome", ["firefox"] = "Firefox",
+        ["ms-teams"] = "Teams", ["teams"] = "Teams", ["winword"] = "Word", ["excel"] = "Excel", ["powerpnt"] = "PowerPoint", ["onenote"] = "OneNote",
+        ["msedgewebview2"] = "Edge WebView", ["thunderbird"] = "Thunderbird",
+    };
+
+    /// <summary>An app's name for the card: the known name ("olk" → "Outlook"), else the process name with a capital letter.</summary>
     public static string Pretty(string process) =>
-        string.IsNullOrEmpty(process) || process == "unknown" ? "the app" : char.ToUpper(process[0]) + process[1..];
+        string.IsNullOrEmpty(process) || process == "unknown" ? "the app"
+        : KnownNames.TryGetValue(process, out var known) ? known : char.ToUpper(process[0]) + process[1..];
+
+    /// <summary>
+    /// A window's app name for the card and the log: the known name ("Outlook" for olk.exe), else the exe's own description
+    /// without the maker ("Microsoft Word" → "Word"), else the process name.
+    /// </summary>
+    public static string AppName(IntPtr hwnd)
+    {
+        string process = ProcessOf(hwnd);
+        if (KnownNames.TryGetValue(process, out var known)) return known;
+        if (process.Length == 0) return Pretty(process);
+        string described = AppCatalog.Describe(process, hwnd);
+        return described.Equals(process, StringComparison.OrdinalIgnoreCase) ? Pretty(process) : Friendly(described);
+    }
+
+    /// <summary>An app's display name without the maker: "Microsoft Outlook" → "Outlook", "Google Chrome" → "Chrome".</summary>
+    public static string Friendly(string name)
+    {
+        string n = Regex.Replace(name ?? "", @"^(?:Microsoft|Google|Mozilla)\s+(?=\S)", "", RegexOptions.CultureInvariant).Trim();
+        return n.Length > 0 ? n : name ?? "";
+    }
 
     /// <summary>
     /// Reads <paramref name="hwnd"/>: UI Automation, then OCR when that found too little (setting), then a vision model

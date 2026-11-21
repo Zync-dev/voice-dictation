@@ -20,7 +20,8 @@ public sealed partial class HandsFree
     /// The same checks as PasteAsync (the app the step is about is in front, not excluded, not a password field), but the
     /// task card stays: no result card. A reply draft is remembered, so a later "send" step (or "send") can send it after a yes.
     /// </summary>
-    internal async Task<(PasteOutcome Outcome, string Why)> PasteForTaskAsync(string text, bool reply)
+    /// <param name="remember">False for words typed into a search box: they are not something a later "send" may send.</param>
+    internal async Task<(PasteOutcome Outcome, string Why)> PasteForTaskAsync(string text, bool reply, bool remember = true)
     {
         if (!await TextInjector.WaitForModifiersReleasedAsync()) return (PasteOutcome.Blocked, "Keys still held.");
         var (ok, why) = await SafeToTypeAsync();
@@ -32,6 +33,7 @@ public sealed partial class HandsFree
             KeysSent.Add("Ctrl+V");
         }
         catch (Exception ex) { return (PasteOutcome.Failed, ex.Message); }
+        if (!remember) return (PasteOutcome.Pasted, "");
         LastPasted = text;
         RememberPaste(text, target, reply ? "Reply pasted, not sent" : "Inserted");
         if (!reply) LastTyped = new PastedReply(text, target, ScreenReader.PidOf(target), ScreenReader.ProcessOf(target), ScreenReader.WindowTitle(target), DateTime.UtcNow);
