@@ -680,6 +680,30 @@ public static class UiControl
         return new ScrollResult(true, before, after, what);
     }, BudgetMs);
 
+    /// <summary>
+    /// Scrolls the scrollable part that holds <paramref name="inside"/> (a row of a list), through UI Automation only:
+    /// the mouse does not move and nothing is selected. Null when nothing around it scrolls.
+    /// </summary>
+    public static Task<ScrollResult?> ScrollAroundAsync(AutomationElement inside, Scroll how) => Worker.RunAsync(() =>
+    {
+        var walker = TreeWalker.ControlViewWalker;
+        AutomationElement? target = null;
+        int depth = 0;
+        for (var e = walker.GetParent(inside); e != null && depth < 12; e = walker.GetParent(e), depth++)
+            if (Scrolls(e)) { target = e; break; }
+        if (target == null) return new ScrollResult(false, 0, 0, "");
+        var sp = (ScrollPattern)target.GetCurrentPattern(ScrollPattern.Pattern);
+        double before = sp.Current.VerticalScrollPercent;
+        switch (how)
+        {
+            case Scroll.Top: sp.SetScrollPercent(ScrollPattern.NoScroll, 0); break;
+            case Scroll.Down: sp.ScrollVertical(ScrollAmount.LargeIncrement); break;
+            case Scroll.Up: sp.ScrollVertical(ScrollAmount.LargeDecrement); break;
+            default: sp.ScrollVertical(ScrollAmount.LargeIncrement); break;
+        }
+        return new ScrollResult(true, before, sp.Current.VerticalScrollPercent, "");
+    }, BudgetMs);
+
     private static bool Scrolls(AutomationElement e)
     {
         try

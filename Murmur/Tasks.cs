@@ -919,6 +919,9 @@ public static class TaskRunner
     /// for the list to load); then one AI call by meaning; then (with no AI) the one row from the sender the user named; then
     /// the app's own search box (typing the name and pressing Enter there is safe and can be undone); only then it fails.
     /// </summary>
+    /// <summary>How many pages down a mail list is scrolled to find a mail that is not in view (about 6 rows a page in new Outlook).</summary>
+    private const int ScrollPages = 8;
+
     private static async Task<StepResult> OpenItemAsync(Context ctx, string description)
     {
         string app = ctx.AppName;
@@ -948,6 +951,25 @@ public static class TaskRunner
         var sender = ItemFinder.SenderWords(description);
         if (pick == null && !asked && sender.Count > 0 && match.Partial.Where(c => ItemFinder.HasAll(c, sender)).ToList() is [var only])
         { pick = only; LastHow = "one word"; }
+        // Not among the rows in view: a mail list shows only what fits on screen, so scroll it down a page at a time
+        // (through UI Automation: the mouse does not move and no mail is opened or marked read) and look again.
+        if (pick == null && items.FirstOrDefault(ItemFinder.MailLike) is { } firstRow)
+        {
+            var row = firstRow;
+            for (int page = 0; page < ScrollPages && pick == null; page++)
+            {
+                ctx.Card($"Looking further down in {app}…");
+                var scrolled = await UiControl.ScrollAroundAsync(row.Element, UiControl.Scroll.Down);
+                if (scrolled is not { Found: true } || scrolled.After <= scrolled.Before + 0.01) { Log.Write($"Task: the list did not scroll further (page {page + 1})"); break; }
+                await Task.Delay(500, ctx.Ct);
+                var more = await FindItemAsync(ctx, description, TimeSpan.FromSeconds(4));
+                if (more == null) break;
+                if (more.Value.Match.Best is { } best) { pick = best; LastHow = $"words, {page + 1} page(s) down"; }
+                else if (more.Value.Items.FirstOrDefault(ItemFinder.MailLike) is { } next) row = next;
+            }
+            // Back to the top when nothing was found, so the list is left as it was.
+            if (pick == null) _ = await UiControl.ScrollAroundAsync(row.Element, UiControl.Scroll.Top);
+        }
         if (pick == null && match.Search.Length > 0)
         {
             pick = await SearchAsync(ctx, description, match.Search, items);
