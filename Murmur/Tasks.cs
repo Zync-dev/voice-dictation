@@ -338,6 +338,9 @@ public static class TaskRunner
         /// <summary>The app's own name for the card ("Outlook", not the process name "olk").</summary>
         public string AppName => ScreenReader.AppName(Target);
 
+        /// <summary>The target window's app profile (AppProfiles.json), or null: then the generic behaviour.</summary>
+        public AppProfile? Profile => AppProfiles.For(Target);
+
         public void Card(string status, bool final = false, bool failed = false)
         {
             Status = status;
@@ -512,7 +515,7 @@ public static class TaskRunner
     {
         await Task.Delay(250, ctx.Ct); // let the app redraw
         ctx.Card($"Step {Math.Min(ctx.Index + 2, ctx.Run.Plan.Steps.Count)} of {ctx.Run.Plan.Steps.Count} · Reading {ctx.AppName}…");
-        bool mail = ItemFinder.IsMailApp(ScreenReader.ProcessOf(ctx.Target), ScreenReader.WindowTitle(ctx.Target));
+        bool mail = IsMail(ctx);
         var read = await ctx.Hf.ReadForTaskAsync(ctx.Ct);
         // A mail that was just opened: its reading pane may still be loading (web mail draws it after the click).
         for (int attempt = 0; mail && attempt < 2 && read.Refused is ScreenRefusal.None or ScreenRefusal.Nothing && (read.Content?.Main.Length ?? 0) < 40; attempt++)
@@ -819,11 +822,13 @@ public static class TaskRunner
         return items;
     }
 
-    private static bool IsMail(Context ctx) => ItemFinder.IsMailApp(ScreenReader.ProcessOf(ctx.Target), ScreenReader.WindowTitle(ctx.Target));
+    /// <summary>A mail app: its profile says so; an app with no profile (or a page in a browser) by its process and title.</summary>
+    private static bool IsMail(Context ctx) => AppProfiles.IsMail(ctx.Profile, ScreenReader.ProcessOf(ctx.Target), ScreenReader.WindowTitle(ctx.Target));
 
-    /// <summary>How long a step may wait for the window's list: long for an app this task just started, short for one seen ready.</summary>
+    /// <summary>How long a step may wait for the window's list: long for an app this task just started, short for one seen ready, else as its profile says.</summary>
     private static TimeSpan LoadLimit(Context ctx) =>
-        ctx.Launched == ctx.Target ? LaunchWait : ctx.ReadyFor == ctx.Target ? TimeSpan.FromSeconds(3) : IsMail(ctx) ? TimeSpan.FromSeconds(8) : TimeSpan.FromSeconds(4);
+        ctx.Launched == ctx.Target ? LaunchWait : ctx.ReadyFor == ctx.Target ? TimeSpan.FromSeconds(3)
+        : ctx.Profile?.LoadSeconds is double s ? TimeSpan.FromSeconds(s) : IsMail(ctx) ? TimeSpan.FromSeconds(8) : TimeSpan.FromSeconds(4);
 
     /// <summary>How long a just-started app gets to show its content (new Outlook on a cold start takes 5-10 s).</summary>
     internal static TimeSpan LaunchWait = TimeSpan.FromSeconds(15);
@@ -842,7 +847,11 @@ public static class TaskRunner
         if (ctx.Target == IntPtr.Zero || ctx.ReadyFor == ctx.Target || Refusal(ctx) != null) return;
         var watch = Stopwatch.StartNew();
         var limit = LoadLimit(ctx);
-        bool mail = IsMail(ctx), shown = false;
+        bool shown = false;
+        // What "loaded" looks like, from the app's profile: a mail app's message rows, a chat's list rows, or (generic) the
+        // page's content or the app's controls.
+        string ready = ctx.Profile?.Ready ?? (IsMail(ctx) ? "mail-rows" : "generic");
+        bool mail = ready == "mail-rows", rowsApp = ready == "list-rows";
         int previous = -1, stable = 0, polls = 0, silent = 0;
         while (!ctx.OverTime)
         {
@@ -858,9 +867,11 @@ public static class TaskRunner
                 // Something to show for: a mail app's message rows, else the page's content (a web app's document has filled
                 // in) or, for an app without a document, its controls.
                 // (A mail app whose rows show no time: its items, once they have been there for a few looks.)
-                bool there = mail ? rows > 0 || listRows > 0 && polls >= 3 : scan.HasDocument ? scan.DocumentNodes >= 5 : scan.Found.Count > 0;
-                int size = mail ? items : scan.Nodes;
-                bool same = previous >= 0 && Math.Abs(size - previous) <= (mail ? 0 : Math.Max(3, previous / 20));
+                bool generic = scan.HasDocument ? scan.DocumentNodes >= 5 : scan.Found.Count > 0;
+                // (A chat whose list shows no rows to UI Automation: the generic sign, after a few looks.)
+                bool there = mail ? rows > 0 || listRows > 0 && polls >= 3 : rowsApp ? listRows > 0 || generic && polls >= 3 : generic;
+                int size = mail || rowsApp ? items : scan.Nodes;
+                bool same = previous >= 0 && Math.Abs(size - previous) <= (mail || rowsApp ? 0 : Math.Max(3, previous / 20));
                 stable = there && same ? stable + 1 : 0;
                 previous = size;
                 if (stable >= 1)
@@ -923,45 +934,115 @@ public static class TaskRunner
     /// Scrolls the list that holds <paramref name="row"/> down a page at a time (through UI Automation: the mouse does
     /// not move and no mail is opened or marked read) and looks again each time. Back to the top when nothing fits.
     /// </summary>
-    private static async Task<UiControl.Clickable?> LookDownAsync(Context ctx, string description, UiControl.Clickable row)
+    private static async Task<(UiControl.Clickable? Pick, int Pages)> LookDownAsync(Context ctx, string description, UiControl.Clickable row)
     {
+        // A web app (new Outlook) reports the new scroll position late: its profile says how long to wait for it.
+        int settle = ctx.Profile?.Items?.ScrollSettleMs ?? 1000;
+        int pages = 0;
         for (int page = 0; page < ScrollPages; page++)
         {
             ctx.Card($"Looking further down in {ctx.AppName}…");
-            var scrolled = await UiControl.ScrollAroundAsync(row.Element, UiControl.Scroll.Down);
+            var scrolled = await UiControl.ScrollAroundAsync(row.Element, UiControl.Scroll.Down, settle);
             if (scrolled is not { Found: true } || scrolled.After <= scrolled.Before + 0.01)
             {
                 Log.Write($"Task: the list did not scroll further (page {page + 1}, found={scrolled?.Found}, {scrolled?.Before:0.#}% → {scrolled?.After:0.#}%)");
+                // A list that is already at its end (it fits on screen) can be scrolled: only one with nothing that scrolls is "cannot".
+                if (page == 0 && scrolled is { Found: true }) pages = -1;
                 break;
             }
+            pages++;
             await Task.Delay(300, ctx.Ct);
             var more = await FindItemAsync(ctx, description, TimeSpan.FromSeconds(4));
             if (more == null) break;
-            if (more.Value.Match.Best is { } best) { LastHow = $"words, {page + 1} page(s) down"; return best; }
+            if (more.Value.Match.Best is { } best) { LastHow = $"words, {page + 1} page(s) down"; return (best, pages); }
             if (more.Value.Items.FirstOrDefault(ItemFinder.MailLike) is { } next) row = next;
         }
-        _ = await UiControl.ScrollAroundAsync(row.Element, UiControl.Scroll.Top);
-        return null;
+        if (pages > 0) _ = await UiControl.ScrollAroundAsync(row.Element, UiControl.Scroll.Top, settle);
+        return (null, pages);
     }
 
-    /// <summary>New Outlook's "Focused" and "Other" inbox tabs (Danish "Prioriteret" / "Andet"), when there are both.</summary>
-    private static Task<(AutomationElement Focused, AutomationElement Other, string OtherName)?> OtherInboxTabAsync(Context ctx) => Worker.RunAsync<(AutomationElement, AutomationElement, string)?>(() =>
+    /// <summary>
+    /// Where to start scrolling a list: its first mail row, else (rows that show no time) the first row inside the list the
+    /// app's profile names by its automation id (new Outlook's "MailList").
+    /// </summary>
+    private static async Task<UiControl.Clickable?> ScrollAnchorAsync(Context ctx, List<UiControl.Clickable> items)
     {
-        var root = AutomationElement.FromHandle(WindowControl.Root(ctx.Target));
-        var tabs = root.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem));
-        AutomationElement? focused = null, other = null;
-        string otherName = "";
-        foreach (AutomationElement t in tabs)
+        if (items.FirstOrDefault(ItemFinder.MailLike) is { } row) return row;
+        if (ctx.Profile?.Items?.Lists is not { Count: > 0 } ids) return null;
+        var first = await Worker.RunAsync(() =>
         {
-            string name = ItemFinder.Fold(t.Current.Name ?? "");
-            if (name is "focused" or "prioriteret" or "fokuseret") focused = t;
-            else if (name is "other" or "andet" or "andre") { other = t; otherName = t.Current.Name; }
+            var root = AutomationElement.FromHandle(WindowControl.Root(ctx.Target));
+            foreach (var id in ids)
+                if (root.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, id)) is { } list
+                    && TreeWalker.ControlViewWalker.GetFirstChild(list) is { } child)
+                    return child;
+            return null;
+        }, 3000);
+        return first == null ? null : items.FirstOrDefault(c => c.Kind is "ListItem" or "DataItem" && SafeCompare(c.Element, first)) ?? items.FirstOrDefault(c => c.Kind is "ListItem" or "DataItem");
+    }
+
+    private static bool SafeCompare(AutomationElement a, AutomationElement b) { try { return Automation.Compare(a, b); } catch { return false; } }
+
+    /// <summary>
+    /// An inbox's tabs, when there are a primary one and others: new Outlook's "Focused" and "Other" (Danish "Prioriteret"
+    /// / "Andet"), Gmail's "Primary" and "Promotions", "Social", "Updates". The names come from the app's profile; a mail
+    /// app with no profile gets new Outlook's. Null when the window has no such tabs; the others already selected are left out.
+    /// </summary>
+    private static Task<(AutomationElement Primary, List<(AutomationElement Tab, string Name)> Others)?> InboxTabsAsync(Context ctx)
+    {
+        var names = ctx.Profile?.Tabs ?? AppProfiles.GenericTabs;
+        var primaryNames = names.Primary.Select(ItemFinder.Fold).ToHashSet();
+        var otherNames = names.Secondary.Select(ItemFinder.Fold).ToList();
+        return Worker.RunAsync<(AutomationElement, List<(AutomationElement, string)>)?>(() =>
+        {
+            var root = AutomationElement.FromHandle(WindowControl.Root(ctx.Target));
+            var tabs = root.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem));
+            AutomationElement? primary = null;
+            var others = new List<(AutomationElement Tab, string Name, int Rank)>();
+            // "Promotions, 3 new" is the tab "Promotions".
+            static bool Is(string name, string want) => name == want || name.StartsWith(want + " ", StringComparison.Ordinal);
+            foreach (AutomationElement t in tabs)
+            {
+                string name = ItemFinder.Fold(t.Current.Name ?? "");
+                if (primaryNames.Any(p => Is(name, p))) primary ??= t;
+                else if (otherNames.FindIndex(o => Is(name, o)) is >= 0 and var rank) others.Add((t, t.Current.Name ?? "", rank));
+            }
+            if (primary == null || others.Count == 0) return null;
+            // A tab already selected: the list as it is was looked at already.
+            static bool Selected(AutomationElement t) { try { return ((SelectionItemPattern)t.GetCurrentPattern(SelectionItemPattern.Pattern)).Current.IsSelected; } catch { return false; } }
+            return (primary, others.Where(o => !Selected(o.Tab)).OrderBy(o => o.Rank).Select(o => (o.Tab, o.Name)).ToList());
+        }, 4000);
+    }
+
+    /// <summary>
+    /// Looks for the item in the inbox's other tabs, one after the other (by its words, then scrolling down), and goes back
+    /// to the primary tab when it is in none. The item and the rows of its tab, and whether the window had such tabs.
+    /// </summary>
+    private static async Task<((UiControl.Clickable Pick, List<UiControl.Clickable> Items)? Found, bool HadTabs)> LookInTabsAsync(Context ctx, string description)
+    {
+        if (await InboxTabsAsync(ctx) is not { } tabs) return (null, false);
+        foreach (var (tab, name) in tabs.Others)
+        {
+            ctx.Card($"Looking in {name} in {ctx.AppName}…");
+            if (!await SelectTabAsync(tab)) continue;
+            await Task.Delay(900, ctx.Ct);
+            if (await FindItemAsync(ctx, description, TimeSpan.FromSeconds(6)) is not { } o) continue;
+            var pick = o.Match.Best;
+            if (pick != null) LastHow = $"words, in {name}";
+            else if (await ScrollAnchorAsync(ctx, o.Items) is { } otherFirst)
+            {
+                pick = (await LookDownAsync(ctx, description, otherFirst)).Pick;
+                if (pick != null) LastHow += $", in {name}";
+            }
+            if (pick != null) return ((pick, o.Items), true);
         }
-        if (focused == null || other == null) return null;
-        // Already in "Other": nothing more to look at.
-        try { if (((SelectionItemPattern)other.GetCurrentPattern(SelectionItemPattern.Pattern)).Current.IsSelected) return null; } catch { }
-        return (focused, other, otherName);
-    }, 4000);
+        await SelectTabAsync(tabs.Primary);
+        await Task.Delay(600, ctx.Ct);
+        return (null, true);
+    }
+
+    /// <summary>For the developer checks: the ways the latest open_item tried after the rows in view, in order ("scroll", "tabs", "search").</summary>
+    internal static readonly List<string> LastTried = [];
 
     private static async Task<bool> SelectTabAsync(AutomationElement tab) => await Worker.RunAsync(() =>
     {
@@ -976,6 +1057,7 @@ public static class TaskRunner
     {
         string app = ctx.AppName;
         LastHow = "";
+        LastTried.Clear();
         var found = await FindItemAsync(ctx, description, LoadLimit(ctx));
         // A just-started web app may not answer the first walks: one more, slower try before giving up.
         if (found == null) { await Task.Delay(1000, ctx.Ct); found = await FindItemAsync(ctx, description, TimeSpan.FromSeconds(6)); }
@@ -1001,36 +1083,49 @@ public static class TaskRunner
         var sender = ItemFinder.SenderWords(description);
         if (pick == null && !asked && sender.Count > 0 && match.Partial.Where(c => ItemFinder.HasAll(c, sender)).ToList() is [var only])
         { pick = only; LastHow = "one word"; }
-        // Not among the rows in view: a mail list shows only what fits on screen, so scroll it down a page at a time
-        // (through UI Automation: the mouse does not move and no mail is opened or marked read) and look again.
-        if (pick == null && items.FirstOrDefault(ItemFinder.MailLike) is { } firstRow)
-            pick = await LookDownAsync(ctx, description, firstRow);
-        // New Outlook sorts newsletters and offers into "Other" (Danish "Andet"): look there too, then go back.
-        if (pick == null && IsMail(ctx) && await OtherInboxTabAsync(ctx) is { } tabs)
+        // Not among the rows in view. The ways to look further, in the order of the app's profile ("scroll", "tabs",
+        // "search"; new Outlook has no search Murmur can use), with the one that worked in this app before tried first.
+        if (pick == null)
         {
-            ctx.Card($"Looking in {tabs.OtherName} in {app}…");
-            if (await SelectTabAsync(tabs.Other))
+            var profile = ctx.Profile;
+            string process = ScreenReader.ProcessOf(ctx.Target);
+            var order = AppMemory.Order(ctx.Hf.Settings, process, profile, "open_item", AppProfiles.FindOf(profile), out string learned);
+            AppMemory.LogNote(profile, process, learned);
+            foreach (var method in order)
             {
-                await Task.Delay(900, ctx.Ct);
-                var other = await FindItemAsync(ctx, description, TimeSpan.FromSeconds(6));
-                if (other is { } o)
+                AppMemory.Outcome? outcome = null;
+                switch (method)
                 {
-                    pick = o.Match.Best;
-                    if (pick != null) LastHow = $"words, in {tabs.OtherName}";
-                    else if (o.Items.FirstOrDefault(ItemFinder.MailLike) is { } otherFirst)
-                    {
-                        pick = await LookDownAsync(ctx, description, otherFirst);
-                        if (pick != null) LastHow += $", in {tabs.OtherName}";
-                    }
-                    if (pick != null) items = o.Items;
+                    // A mail list shows only what fits on screen: scroll it down a page at a time (through UI Automation:
+                    // the mouse does not move and no mail is opened or marked read) and look again.
+                    case "scroll":
+                        if (await ScrollAnchorAsync(ctx, items) is not { } firstRow) break;
+                        LastTried.Add(method);
+                        var (down, pages) = await LookDownAsync(ctx, description, firstRow);
+                        pick = down;
+                        outcome = pick != null ? AppMemory.Outcome.Worked : pages == 0 ? AppMemory.Outcome.Failed : AppMemory.Outcome.Missed;
+                        break;
+                    // New Outlook sorts newsletters and offers into "Other" (Danish "Andet"), Gmail into "Promotions" and
+                    // more: look there too, then go back.
+                    case "tabs":
+                        if (!IsMail(ctx) && profile?.Tabs == null) break;
+                        LastTried.Add(method);
+                        var (inTab, tabsFound) = await LookInTabsAsync(ctx, description);
+                        if (inTab != null) { pick = inTab.Value.Pick; items = inTab.Value.Items; }
+                        outcome = pick != null ? AppMemory.Outcome.Worked : tabsFound ? AppMemory.Outcome.Missed : AppMemory.Outcome.Failed;
+                        break;
+                    case "search":
+                        if (match.Search.Length == 0 || AppProfiles.SearchOf(profile).Count == 0) break;
+                        LastTried.Add(method);
+                        var (result, searched) = await SearchAsync(ctx, description, match.Search, items);
+                        pick = result;
+                        if (pick != null) LastHow = "search";
+                        outcome = pick != null ? AppMemory.Outcome.Worked : searched ? AppMemory.Outcome.Missed : AppMemory.Outcome.Failed;
+                        break;
                 }
-                if (pick == null) { await SelectTabAsync(tabs.Focused); await Task.Delay(600, ctx.Ct); }
+                if (outcome is { } o) AppMemory.Record(ctx.Hf.Settings, process, profile, "open_item", method, o);
+                if (pick != null) break;
             }
-        }
-        if (pick == null && match.Search.Length > 0)
-        {
-            pick = await SearchAsync(ctx, description, match.Search, items);
-            if (pick != null) LastHow = "search";
         }
         if (pick == null) return new StepResult(false, $"Found nothing like “{description}” in {app}.");
         Log.Write($"Task: open_item found “{Short(pick.Text, 80)}” by {LastHow} ({items.Count} items)");
@@ -1102,23 +1197,24 @@ public static class TaskRunner
     /// key: Alt+Q in new Outlook and Outlook on the web, Ctrl+E in classic Outlook), the key words typed, Enter in that box
     /// only, and the top result that fits. Searching changes nothing in the user's mail and is undone by clearing the box.
     /// </summary>
-    private static async Task<UiControl.Clickable?> SearchAsync(Context ctx, string description, string words, List<UiControl.Clickable> before)
+    /// <remarks>Searched: whether the search ran (a box had the focus and Enter was pressed there), for the memory of what worked.</remarks>
+    private static async Task<(UiControl.Clickable? Pick, bool Searched)> SearchAsync(Context ctx, string description, string words, List<UiControl.Clickable> before)
     {
         var hf = ctx.Hf;
         string app = ctx.AppName;
         ctx.Card(ctx.StepStatus($"Searching {app} for “{Short(words, 30)}”…"));
-        if (!await InFrontAsync(ctx)) { Log.Write($"Task: {app} is not in front for the search (in front: {Front()})"); return null; }
+        if (!await InFrontAsync(ctx)) { Log.Write($"Task: {app} is not in front for the search (in front: {Front()})"); return (null, true); }
         var box = await FocusSearchBoxAsync(ctx);
-        if (box == null) { Log.Write($"Task: no search box in {app}"); return null; }
+        if (box == null) { Log.Write($"Task: no search box in {app}"); return (null, false); }
         // Ctrl+A and the paste only while the search box itself has the focus (never a draft or a field that kept it).
-        if (await SearchFieldFocusedAsync(ctx, box) == null) { Log.Write("Task: the search box lost the focus; nothing typed"); return null; }
+        if (await SearchFieldFocusedAsync(ctx, box) == null) { Log.Write("Task: the search box lost the focus; nothing typed"); return (null, true); }
         await hf.PressChordAsync([Control.Ctrl], (ushort)'A', "Ctrl+A"); // whatever was searched before goes
         var (outcome, why) = await hf.PasteForTaskAsync(words, reply: false, remember: false);
-        if (outcome != PasteOutcome.Pasted) { Log.Write($"Task: search not typed: {why} (in front: {Front()})"); return null; }
+        if (outcome != PasteOutcome.Pasted) { Log.Write($"Task: search not typed: {why} (in front: {Front()})"); return (null, true); }
         await Task.Delay(150, ctx.Ct);
         // Enter only while the search box itself has the focus.
-        if (await SearchFieldFocusedAsync(ctx, box) == null) { Log.Write("Task: the search box lost the focus; no Enter"); return null; }
-        if (!await hf.PressChordAsync([], 0x0D, "Enter", enterIsSafe: true)) return null;
+        if (await SearchFieldFocusedAsync(ctx, box) == null) { Log.Write("Task: the search box lost the focus; no Enter"); return (null, true); }
+        if (!await hf.PressChordAsync([], 0x0D, "Enter", enterIsSafe: true)) return (null, true);
         hf.KeysSent.Add("search " + words);
         LastSearch = words;
         // The results: the mail rows are mostly others than before (a server search can take seconds, and meanwhile the old
@@ -1135,15 +1231,15 @@ public static class TaskRunner
         }
         await Task.Delay(500, ctx.Ct);
         var found = await FindItemAsync(ctx, description, TimeSpan.FromSeconds(8), Changed);
-        if (found == null) return null;
+        if (found == null) return (null, true);
         var (items, match) = found.Value;
-        if (!Changed(items)) { Log.Write("Task: the search showed no new results"); return null; }
+        if (!Changed(items)) { Log.Write("Task: the search showed no new results"); return (null, true); }
         // Only a result that has the user's words (most of them, or the sender's name / the searched words): never just the
         // top row, which may be a mail that came in meanwhile.
         var key = ItemFinder.KeyWords(words).Words;
         var pick = match.Best ?? items.FirstOrDefault(c => ItemFinder.HasAll(c, key));
-        if (pick != null && await InsideAsync(pick.Element, box)) { Log.Write("Task: the result is inside the search box (a suggestion); not opened"); return null; }
-        return pick;
+        if (pick != null && await InsideAsync(pick.Element, box)) { Log.Write("Task: the result is inside the search box (a suggestion); not opened"); return (null, true); }
+        return (pick, true);
     }
 
     /// <summary>Whether an element is inside another (a suggestion in a search box's dropdown).</summary>
@@ -1186,88 +1282,105 @@ public static class TaskRunner
         return front == IntPtr.Zero ? "nothing" : $"{ScreenReader.AppName(front)} pid {ScreenReader.PidOf(front)}";
     }
 
-    /// <summary>Puts the focus in the app's search box: by its name first, else the app's search key. The box, or null when no search box has the focus.</summary>
+    /// <summary>
+    /// Puts the focus in the app's search box, in the ways its profile lists (AppProfiles.json "search"), with the one that
+    /// worked in this app before tried first: "box" (a box named "Search" / "Søg", no keys), "key:…" (the app's search key:
+    /// Ctrl+E and F3 in classic Outlook; Alt+Q, Ctrl+E and F3 in Outlook on the web, whose shortcuts the user picks),
+    /// "click" (a control named "Search" that opens the box). An app with no profile: the box, then the control. New
+    /// Outlook lists none (its search box is not exposed to UI Automation and no key focuses it). The box, or null.
+    /// </summary>
     private static async Task<AutomationElement?> FocusSearchBoxAsync(Context ctx)
     {
         var hf = ctx.Hf;
-        string process = ScreenReader.ProcessOf(ctx.Target).ToLowerInvariant();
-        bool browser = Browsers.Contains(process);
-        var byName = await Worker.RunAsync(() =>
+        string process = ScreenReader.ProcessOf(ctx.Target);
+        bool browser = AppProfiles.IsBrowser(process);
+        var profile = ctx.Profile;
+        var methods = AppMemory.Order(hf.Settings, process, profile, "search_box", AppProfiles.SearchOf(profile), out string learned);
+        AppMemory.LogNote(profile, process, learned);
+        AutomationElement? byName = null;
+        void Note(string method, bool worked) => AppMemory.Record(hf.Settings, process, profile, "search_box", method, worked ? AppMemory.Outcome.Worked : AppMemory.Outcome.Failed);
+        foreach (var method in methods)
         {
-            var root = AutomationElement.FromHandle(WindowControl.Root(ctx.Target));
-            var cache = new CacheRequest();
-            foreach (var p in new AutomationProperty[] { AutomationElement.NameProperty, AutomationElement.ControlTypeProperty, AutomationElement.IsOffscreenProperty, AutomationElement.IsPasswordProperty, AutomationElement.IsEnabledProperty, AutomationElement.IsKeyboardFocusableProperty })
-                cache.Add(p);
-            AutomationElementCollection boxes;
-            using (cache.Activate())
-                boxes = root.FindAll(TreeScope.Descendants, new OrCondition(
-                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit), new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ComboBox)));
-            var ranked = new List<(AutomationElement Box, int Score)>();
-            foreach (AutomationElement b in boxes)
+            ctx.Ct.ThrowIfCancellationRequested();
+            if (method == "box")
             {
-                var c = b.Cached;
-                if (c.IsPassword || c.IsOffscreen || !c.IsEnabled) continue;
-                string name = ItemFinder.Fold(c.Name ?? "");
-                // Never a browser's address bar ("Address and search bar", "Adresse- og søgelinje"), never a field of a draft.
-                if (!SearchName.IsMatch(name) || NotSearch.IsMatch(name)) continue;
-                int score = name is "search" or "sog" or "soeg" ? 3 : name.StartsWith("search", StringComparison.Ordinal) || name.StartsWith("sog", StringComparison.Ordinal) ? 2 : 1;
-                if (score < 2) continue; // "Find people", "Filter": not the mail search; rather none
-                ranked.Add((b, score));
+                byName = await SearchBoxByNameAsync(ctx, browser);
+                if (byName != null)
+                {
+                    for (int i = 0; i < 4; i++)
+                    {
+                        await Task.Delay(150 + 100 * i, ctx.Ct);
+                        if (await SearchFieldFocusedAsync(ctx, byName) is { } box) { Note(method, true); return box; }
+                    }
+                    // Outlook's box opens its own field on a click: the key or the control below puts the focus there.
+                }
+                Note(method, false);
             }
-            // The best by its name that is where the app's own search is: in a browser, inside the page (not the browser's
-            // own bar); never inside the open message (a mail's own form, a nested document or the reading pane).
-            foreach (var (b, _) in ranked.OrderByDescending(r => r.Score))
+            else if (method.StartsWith("key:", StringComparison.Ordinal) && AppProfiles.Keys(method[4..]) is { } k)
             {
-                var (documents, inMessage) = Where(b);
-                if (inMessage || documents >= 2 || browser && documents == 0) continue;
-                b.SetFocus();
-                return b;
+                // What had the focus before the key: the box after it must be another one (a key that did nothing leaves the
+                // focus in a draft or a field, and that is never taken for the search box).
+                var before = await Worker.RunAsync(() => ContextReader.Focused(), 1500);
+                if (!await hf.PressChordAsync(k.Mods, k.Key, k.Label)) { Log.Write($"Task: {k.Label} not pressed: {await Control.WhyNotAsync(hf)} (in front: {Front()})"); return null; }
+                for (int i = 0; i < 4; i++)
+                {
+                    await Task.Delay(200 + 50 * i, ctx.Ct);
+                    if (await SearchFieldFocusedAsync(ctx, null, before, byName) is { } box) { Log.Write($"Task: {k.Label} opened the search box"); Note(method, true); return box; }
+                }
+                Log.Write($"Task: {k.Label} did not open a search box");
+                Note(method, false);
             }
-            return null;
-        }, 5000);
-        if (byName != null)
-        {
-            for (int i = 0; i < 4; i++)
+            else if (method == "click")
             {
-                await Task.Delay(150 + 100 * i, ctx.Ct);
-                if (await SearchFieldFocusedAsync(ctx, byName) is { } box) return box;
-            }
-            // Outlook's box opens its own field on a click: the key below puts the focus there.
-        }
-        string title = ScreenReader.WindowTitle(ctx.Target);
-        // The search key of Outlook only: classic Outlook's Ctrl+E, new Outlook's Alt+Q (also Outlook on the web in a
-        // browser). Never in another app whose title happens to say "Outlook" (Word's Alt+Q is "Tell me").
-        // New Outlook and Outlook on the web use Alt+Q with "Outlook.com" shortcuts but Ctrl+E or F3 with "Outlook"
-        // (classic) shortcuts, a setting the user picks; each is tried until a search box has the focus.
-        bool newOutlook = process == "olk" || (browser || SearchKeyProcesses.Contains(process)) && title.Contains("Outlook", StringComparison.OrdinalIgnoreCase);
-        (ushort[] Mods, ushort Key, string Label)[] shortcuts =
-            process == "outlook" ? [(new[] { Control.Ctrl }, (ushort)'E', "Ctrl+E"), (Array.Empty<ushort>(), (ushort)0x72, "F3")]
-            : newOutlook ? [(new[] { Control.Alt }, (ushort)'Q', "Alt+Q"), (new[] { Control.Ctrl }, (ushort)'E', "Ctrl+E"), (Array.Empty<ushort>(), (ushort)0x72, "F3")]
-            : [];
-        foreach (var k in shortcuts)
-        {
-            // What had the focus before the key: the box after it must be another one (a key that did nothing leaves the
-            // focus in a draft or a field, and that is never taken for the search box).
-            var before = await Worker.RunAsync(() => ContextReader.Focused(), 1500);
-            if (!await hf.PressChordAsync(k.Mods, k.Key, k.Label)) { Log.Write($"Task: {k.Label} not pressed: {await Control.WhyNotAsync(hf)} (in front: {Front()})"); return null; }
-            for (int i = 0; i < 4; i++)
-            {
-                await Task.Delay(200 + 50 * i, ctx.Ct);
-                if (await SearchFieldFocusedAsync(ctx, null, before, byName) is { } box) { Log.Write($"Task: {k.Label} opened the search box"); return box; }
-            }
-            Log.Write($"Task: {k.Label} did not open a search box");
-        }
-        // New Outlook shows its search field only once it is clicked: click the control named "Search" / "Søg".
-        if (await ClickSearchControlAsync(ctx, browser) is { } clicked)
-        {
-            for (int i = 0; i < 5; i++)
-            {
-                await Task.Delay(200 + 50 * i, ctx.Ct);
-                if (await SearchFieldFocusedAsync(ctx, null, clicked, byName) is { } box) { Log.Write("Task: clicking the search control opened the search box"); return box; }
+                // New Outlook on the web shows its search field only once it is clicked: click the control named "Search" / "Søg".
+                if (await ClickSearchControlAsync(ctx, browser) is { } clicked)
+                {
+                    for (int i = 0; i < 5; i++)
+                    {
+                        await Task.Delay(200 + 50 * i, ctx.Ct);
+                        if (await SearchFieldFocusedAsync(ctx, null, clicked, byName) is { } box) { Log.Write("Task: clicking the search control opened the search box"); Note(method, true); return box; }
+                    }
+                }
+                Note(method, false);
             }
         }
         return null;
     }
+
+    /// <summary>The app's search box found by its name ("Search", "Søg"), given the focus; never a browser's own bar or a field of the open message.</summary>
+    private static Task<AutomationElement?> SearchBoxByNameAsync(Context ctx, bool browser) => Worker.RunAsync(() =>
+    {
+        var root = AutomationElement.FromHandle(WindowControl.Root(ctx.Target));
+        var cache = new CacheRequest();
+        foreach (var p in new AutomationProperty[] { AutomationElement.NameProperty, AutomationElement.ControlTypeProperty, AutomationElement.IsOffscreenProperty, AutomationElement.IsPasswordProperty, AutomationElement.IsEnabledProperty, AutomationElement.IsKeyboardFocusableProperty })
+            cache.Add(p);
+        AutomationElementCollection boxes;
+        using (cache.Activate())
+            boxes = root.FindAll(TreeScope.Descendants, new OrCondition(
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit), new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ComboBox)));
+        var ranked = new List<(AutomationElement Box, int Score)>();
+        foreach (AutomationElement b in boxes)
+        {
+            var c = b.Cached;
+            if (c.IsPassword || c.IsOffscreen || !c.IsEnabled) continue;
+            string name = ItemFinder.Fold(c.Name ?? "");
+            // Never a browser's address bar ("Address and search bar", "Adresse- og søgelinje"), never a field of a draft.
+            if (!SearchName.IsMatch(name) || NotSearch.IsMatch(name)) continue;
+            int score = name is "search" or "sog" or "soeg" ? 3 : name.StartsWith("search", StringComparison.Ordinal) || name.StartsWith("sog", StringComparison.Ordinal) ? 2 : 1;
+            if (score < 2) continue; // "Find people", "Filter": not the mail search; rather none
+            ranked.Add((b, score));
+        }
+        // The best by its name that is where the app's own search is: in a browser, inside the page (not the browser's
+        // own bar); never inside the open message (a mail's own form, a nested document or the reading pane).
+        foreach (var (b, _) in ranked.OrderByDescending(r => r.Score))
+        {
+            var (documents, inMessage) = Where(b);
+            if (inMessage || documents >= 2 || browser && documents == 0) continue;
+            b.SetFocus();
+            return b;
+        }
+        return null;
+    }, 5000);
 
     /// <summary>
     /// Clicks (Invoke) the app's own search control by its name ("Search", "Søg", "Search mail"), outside the open
@@ -1300,11 +1413,6 @@ public static class TaskRunner
         return null;
     }, 5000);
 
-    /// <summary>Browsers (Outlook on the web, Gmail): their own address bar is never the app's search box.</summary>
-    private static readonly HashSet<string> Browsers = ["msedge", "chrome", "firefox", "brave", "opera", "vivaldi", "arc", "iexplore"];
-
-    /// <summary>For the developer checks: other processes whose window titled "Outlook" gets Alt+Q (the checks' fake Outlook).</summary>
-    internal static readonly HashSet<string> SearchKeyProcesses = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Names of fields that are never the search box: a browser's address bar, a draft's body, subject or recipients.</summary>
     private static readonly Regex NotSearch = new(@"\b(?:address|adresse\w*|url|message body|body|brodtekst|subject|emne|to|til|cc|bcc|recipients?|modtager\w*|reply|svar)\b", RegexOptions.CultureInvariant);
@@ -1492,7 +1600,10 @@ public static class TaskRunner
             await Task.Delay(400, ctx.Ct);
         }
         if (fields == null) return new StepResult(false, $"{ctx.AppName} did not answer in time.");
-        var scored = fields.Select(f => (f, s: UiControl.Score(want, f.Name))).Where(x => x.s >= 0.6).OrderByDescending(x => x.s).ToList();
+        // A chat's message box goes by the names its profile lists ("Message", "Type a message"), for "the message box".
+        List<string> also = want is "message" or "message box" or "chat" && ctx.Profile?.MessageBox is { Count: > 0 } box ? box : [];
+        double Fit(string name) => also.Select(a => UiControl.Score(a, name)).Append(UiControl.Score(want, name)).Max();
+        var scored = fields.Select(f => (f, s: Fit(f.Name))).Where(x => x.s >= 0.6).OrderByDescending(x => x.s).ToList();
         // The only field when its name does not fit: only a real text box, never the page or document itself.
         var only = fields.Count == 1 && await Worker.RunAsync(() => fields[0].Element.Current.ControlType == ControlType.Edit, 1000) ? fields[0] : null;
         var hit = scored.Count > 0 ? scored[0].f : only;

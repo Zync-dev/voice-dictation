@@ -378,7 +378,7 @@ How it works (`Tasks.cs`):
    - **open_item** (`Tasks.cs`, `ItemFinder.cs`) looks for the item in this order, and keeps looking while the list loads:
      1. **By the words you said.** Each row's text is its name plus the names of the parts inside it, because mail apps name rows in different ways: new Outlook and Outlook on the web say "Unread, Daniel Hansen, Re: Tilbud, 10:32, Hej Lukas …" in one name; other apps leave the row unnamed and put the sender, subject, time and preview in child elements. Filler words are dropped in Danish and English ("the", "email", "mail", "mailen", "message", "beskeden", "from", "fra", "about", "om"). The rest are matched loosely: case, accents and æ/ø/å don't matter, a shared start counts ("tilbuddet" fits "Tilbud"), and so does a close spelling ("Myprotin") or a name said apart ("my protein" fits "MyProtein"). "Latest", "recent", "newest", "seneste", "nyeste" and "sidste" mean the first row that fits, from the top. When several rows fit as well, the top one wins, and a mail row wins over a folder with the same name.
      2. **By meaning**, in one AI call, when the words are not enough. The call gets only the message rows (sender, subject, time, preview), numbered in screen order, inside `<screen_content>` and marked as untrusted. It answers with a number, which is checked against the list. When it finds nothing but exactly one row has one of your words, that row is used.
-     3. **The app's own search**, when the mail is not in view. The search box is found by its name ("Search", "Søg"). Otherwise the app's key is used: Alt+Q in new Outlook and Outlook on the web, Ctrl+E in classic Outlook. Murmur types the sender's name (the words after "from" / "fra"), or else your key words, and presses Enter only while that search box has the focus. Then it waits for the results and opens the top one that fits. Searching changes nothing in your mail and needs no question on the card.
+     3. **Further down, in the inbox's other tabs, and with the app's own search**, when the mail is not in view, in the order of the app's profile, and what worked in that app before first (see [App profiles and memory of what worked](#app-profiles-and-memory-of-what-worked)). Scrolling goes a page at a time through UI Automation. The tabs are new Outlook's "Focused" / "Other" and Gmail's "Primary" / "Promotions", "Social", "Updates"; after them the list goes back to the first tab. The search box is found the ways the profile lists: by its name ("Search", "Søg"), the app's key (Alt+Q, Ctrl+E or F3 in Outlook on the web, Ctrl+E or F3 in classic Outlook), or the control named "Search". New Outlook's profile lists no search, because its search box is not exposed to UI Automation and no key focuses it there. Murmur types the sender's name (the words after "from" / "fra"), or else your key words, and presses Enter only while that search box has the focus. Then it waits for the results and opens the top one that fits. Searching changes nothing in your mail and needs no question on the card.
      4. Only then does the step fail ("Found nothing like … in Outlook.").
    - The row is opened with UI Automation's Invoke or Select. A row that offers neither is focused and gets Enter, but only when the focus is on that very row. A mail row is only opened, so a subject with "send" or "delete" in it doesn't ask first. A link inside a message still does.
    - Before Murmur presses keys or pastes in a task (search, reply), the task's window has to be in front. If something else took the front during the task, Murmur brings the task's window back, unless that window is an excluded app. Keys still only go to the window in front, after the usual checks.
@@ -424,6 +424,57 @@ Not verified:
 - Gmail's own search key ("/") isn't pressed. Gmail's search box is found by its name ("Search mail"). In classic Outlook, Ctrl+E is assumed to put the focus in a text box, and Enter is only pressed after Murmur checks that.
 - Opening real apps was not tried. The only app started was the test window.
 - The full path from hotkey and microphone through Whisper into a task was not run. The checks call the same command handler with the transcribed phrase.
+
+## App profiles and memory of what worked
+
+Tasks know the apps people use most, and learn which way works in each one. Settings > What Murmur learns about apps.
+
+**App profiles** (`AppProfiles.json`, embedded in Murmur.exe, read by `AppProfiles.cs`). One profile per app: new Outlook (`olk`), classic Outlook (`outlook`), Outlook on the web and Gmail (a browser, by the window title), Slack and Teams (app and web), Discord, WhatsApp, Messenger, Thunderbird, Chrome, Edge, Firefox, Word, Excel, VS Code and Cursor, Windows Terminal, Notepad and File Explorer. The file starts with a comment that describes every field. Per profile:
+
+| Field | What it says | New Outlook, for example |
+| --- | --- | --- |
+| `name`, `kind` | The app's name, and mail, chat, browser, document, editor, terminal or files | "Outlook", mail |
+| `match` | Process names, or a browser plus a title pattern for a web app. The first profile that matches wins, so web apps come before the browsers | `olk` |
+| `ready` | What "loaded" looks like after opening it: mail rows, list rows (a chat), or a document / controls | mail rows |
+| `items` | The list's automation id (to scroll it when no row in view shows a time), how long a scroll may take to report its position | `MailList`, 1.5 s |
+| `tabs` | Inbox tabs to look in when a mail is not in view | Focused / Other (Prioriteret / Andet) |
+| `find` | The order of the ways to look further: scroll, tabs, search | scroll, tabs |
+| `search` | The ways to the search box, in order: a box by its name, a key, the Search control | none: its search box is not exposed to UI Automation and Alt+Q, Ctrl+E and F3 focus nothing |
+| `reply` | The reply key(s), where the reply field appears, how long to wait for it | Ctrl+R, inline |
+| `send` | The key that sends, only after a yes on the card | Ctrl+Enter |
+| `messageBox` | A chat's message box names, for "click into the message box" | (Slack: "Message") |
+| `quirks` | Notes: WebView2 child process, late scroll position, no search box | webview2, delayed-scroll, no-search-box |
+
+What uses them: the task runner's readiness wait and its time limit, open_item's order (scroll, tabs, search), the search box ways (`focus_field` "the search box" uses them too), the reply shortcut (`ReplyTargets`) and the send key (`SendTargets`), the chat check and the message box. The reply and send keys are the same as before, now read from the profiles (checked by `--profiletest`). Changes from before: classic Outlook waits 4 s for its reply window; Word, Excel, Notepad, VS Code and the terminal no longer get the generic search (Word's title bar box is its command search); new Outlook no longer presses Alt+Q, Ctrl+E or F3; Outlook on the web and Gmail are recognised by "- Outlook" and "- Gmail" in the title, so a search page about Outlook is not taken for it; Word with "Mail" in its title is not taken for a mail app. An app with no profile gets the generic behaviour as before (search box by name, then the Search control; mail app by its title).
+
+Your own profiles: put `app-profiles.json` (same shape, a `profiles` list) in the data folder. A profile there with a built-in id replaces it, a new id is added in front. A profile that is not valid is left out and the log says why.
+
+**Memory of what worked** (`AppMemory.cs`, `app-memory.json` in the data folder). Per app (process and profile) and per kind of step, Murmur counts how each way went:
+
+- `open_item`: `scroll`, `tabs` (the Other tab) or `search`
+- `search_box`: `box`, `key:Alt+Q`, `key:Ctrl+E`, `key:F3`, `click`
+- `reply`: `key:Ctrl+R`, `key:R`
+
+Each way has worked and failed counts, the failures in a row and the time it was last tried. "Failed" means the way could not do its part (nothing to scroll, no tabs, the key opened no box, no reply field came up). A way that did its part but the mail was not there counts neither way. Next time:
+
+- The way that worked is tried first (the latest first). The rest keep the profile's order.
+- A way that failed 3 times in a row is skipped. It is tried again, last, after 7 days or 10 runs of that step in that app.
+- The log says what was learned, for example "Learned for Outlook: open_item tries tabs first (worked 2×)". The card doesn't show it.
+
+Only process names, profile ids, the step kinds and the method names above are stored (a name of another shape is refused), never titles, mail text, names or searched words. The memory never leaves the PC. Off in Settings, nothing is read or written. **Reset** deletes the file. The rows read on screen are still found by their words first. The memory only changes what is tried after that.
+
+Settings: `AppMemoryEnabled` (on).
+
+| Switch | What it does |
+| --- | --- |
+| `--profiletest out.txt` | AppProfiles.json loads, every profile is valid and has its schema comment; five broken profiles are left out and named; `app-profiles.json` adds and replaces profiles; 31 cases of matching (process, title, web apps in a browser, a search page about Outlook, Word with "Outlook" in its title, the taskbar); the mail and chat checks, the search and find orders, key chords; the reply and send keys of 15 apps are the ones Murmur had built in before. The memory with a made-up clock: the profile's order at first, what worked first, another app unaffected, skipped after 3 failures in a row, tried again after 10 runs and after 7 days, counts, missed, saved and read back, refused names, no screen text in the file, the setting off, reset. Then the checks' fake new Outlook with "Focused" and "Other" tabs (`--outlookhost --tabs`, its own process, UI Automation only, so it also runs on a hidden desktop): a newsletter only in Other is found there with no key pressed; the next time Other is looked in first and only there, and the log says so; a mail in view is found by its words with nothing else tried; a mail that is nowhere fails and the list goes back to Focused; app-memory.json holds no screen text. No AI, no network. Exit code 1 on a failure |
+| `--show-appmemory` | Opens Settings scrolled to this section (with `--page=5`) |
+
+The other checks (`--tasktest`, `--screentest`, `--controltest`, `--edittest`, `--speaktest`, `--learning-test`) start with an empty memory kept in memory only, so a run never depends on an earlier one. `--tasktest` gives its fake Outlook a profile of its own (Outlook on the web's ways to the search box).
+
+Not verified:
+- None of the real apps was driven with the profiles. The new Outlook profile follows what `--uia-shape olk` showed on one PC (English UI): the `MailList` list, the late scroll position, the Focused / Other tabs, no search box. The other profiles come from how the apps are known to work: their titles, keys and box names were not checked in the real apps. Gmail's tabs, Slack's and Teams' message box names, Teams' Ctrl+E and classic Outlook's reply window are guesses until tried.
+- On the hidden desktop the checks run on, the fake Outlook's own row selection lands up to a few seconds after Murmur selects it (the check waits for it). The search, reply and send parts of the memory need keys and so a window in front: they were checked with the unit checks, not end to end.
 
 ## Sound clean-up and hands-free auto-stop
 

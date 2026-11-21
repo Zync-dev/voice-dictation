@@ -264,6 +264,13 @@ public class AppSettings
 
     // ---- end Hands-free: multi-step tasks ----
 
+    // ---- App profiles and memory of what worked (AppProfiles.cs, AppMemory.cs) ----
+
+    /// <summary>Tasks remember, per app, which way of finding a mail, opening the search box or the reply field worked, and try that first next time (app-memory.json; no screen text).</summary>
+    public bool AppMemoryEnabled { get; set; } = true;
+
+    // ---- end App profiles and memory ----
+
     // ---- persistence ----
 
     /// <summary>The real data folder; speech models always live here so test runs do not download them again.</summary>

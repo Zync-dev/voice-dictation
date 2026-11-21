@@ -201,24 +201,14 @@ public static class SendTargets
 {
     public sealed record Target(string Name, Func<ActiveWindowInfo, bool> Matches, ushort Modifier, string Label);
 
-    private static bool Is(ActiveWindowInfo a, params string[] processes) => processes.Any(p => a.Process.Equals(p, StringComparison.OrdinalIgnoreCase));
-    private static bool InBrowser(ActiveWindowInfo a, string title) => ReplyTargets.IsBrowser(a) && a.Title.Contains(title, StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// The developer checks add their own test windows' send keys here. Real apps' send keys come from their profile
+    /// (AppProfiles.json "send": Ctrl+Enter in Outlook, Outlook on the web, Gmail and Thunderbird; Enter in Slack, Teams,
+    /// Discord, WhatsApp and Messenger).
+    /// </summary>
+    public static readonly List<Target> Known = [];
 
-    /// <summary>Known send keys. The developer checks add their own test window here.</summary>
-    public static readonly List<Target> Known =
-    [
-        new("Outlook", a => Is(a, "outlook", "olk"), (ushort)Native.VK_CONTROL, "Ctrl+Enter"),
-        new("Thunderbird", a => Is(a, "thunderbird"), (ushort)Native.VK_CONTROL, "Ctrl+Enter"),
-        new("Outlook", a => InBrowser(a, "Outlook"), (ushort)Native.VK_CONTROL, "Ctrl+Enter"),
-        new("Gmail", a => InBrowser(a, "Gmail"), (ushort)Native.VK_CONTROL, "Ctrl+Enter"),
-        new("Slack", a => Is(a, "slack") || InBrowser(a, "Slack"), 0, "Enter"),
-        new("Teams", a => Is(a, "ms-teams", "teams") || InBrowser(a, "Microsoft Teams"), 0, "Enter"),
-        new("Discord", a => Is(a, "discord"), 0, "Enter"),
-        new("WhatsApp", a => Is(a, "whatsapp") || a.Title.Contains("WhatsApp", StringComparison.OrdinalIgnoreCase), 0, "Enter"),
-        new("Messenger", a => Is(a, "messenger") || InBrowser(a, "Messenger"), 0, "Enter"),
-    ];
-
-    public static Target? For(ActiveWindowInfo app) => Known.FirstOrDefault(t => t.Matches(app));
+    public static Target? For(ActiveWindowInfo app) => Known.FirstOrDefault(t => t.Matches(app)) ?? AppProfiles.SendTargetFor(app);
 }
 
 /// <summary>

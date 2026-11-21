@@ -807,7 +807,8 @@ public static class TaskTests
     {
         lines.Add("== a mail client like new Outlook (slow start, rows named as Outlook names them, its own search) ==");
         TaskRunner.NoAiPick = true;
-        TaskRunner.SearchKeyProcesses.Add(Process.GetCurrentProcess().ProcessName);
+        // The fake Outlook's profile: Outlook on the web's ways to its search box (by name, Alt+Q, Ctrl+E, F3, the Search control).
+        AppProfiles.TestProfiles.Add(ProfileTests.FakeOutlookProfile(Process.GetCurrentProcess().ProcessName));
         TaskPlan? next = null;
         TaskPlanner.TestPlan = _ => next;
         var keepRunning = AppCatalog.FakeRunning;
@@ -980,7 +981,7 @@ public static class TaskTests
         finally
         {
             AppCatalog.TestLaunch = null;
-            TaskRunner.SearchKeyProcesses.Clear();
+            AppProfiles.TestProfiles.Clear();
             AppCatalog.FakeInstalled = [];
             AppCatalog.FakeRunning = keepRunning;
             if (launched != null) await launched.Quit();

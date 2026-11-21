@@ -45,10 +45,20 @@ internal static class OutlookHost
         new(false, "MyProtein", "Welcome to MyProtein", "01-06-2026", "Thanks for signing up."),
     ];
 
+    /// <summary>With --tabs (the app profile checks): the mails new Outlook sorts into its "Other" tab.</summary>
+    internal static readonly Mail[] OtherMails =
+    [
+        new(true, "Zalando", "Black Friday: up to 70% off", "08:05", "Our biggest sale is here. Shop now before it's gone."),
+        new(false, "Spotify", "Your 2026 Wrapped", "17-11-2026", "See what you listened to this year."),
+        new(false, "Ikea Family", "Nyheder i november", "14-11-2026", "Se månedens nyheder og tilbud."),
+    ];
+
     public static void Run(string[] args)
     {
         int slow = args.FirstOrDefault(a => a.StartsWith("--slow="))?[7..] is { } ms && int.TryParse(ms, out int v) ? v : 0;
         bool partsOnly = args.Contains("--parts");
+        // App profile checks: "Focused" and "Other" inbox tabs as in new Outlook (newsletters in Other).
+        bool withTabs = args.Contains("--tabs");
         var keys = new List<string>();
         var searches = new List<string>();
         bool sent = false, enterElsewhere = false;
@@ -73,7 +83,15 @@ internal static class OutlookHost
         var top = new DockPanel { Children = { newMail, search } };
         var middle = new DockPanel();
         DockPanel.SetDock(folders, Dock.Left);
-        var listArea = new Grid { Children = { loading, list } };
+        var listGrid = new Grid { Children = { loading, list } };
+        var tabs = new TabControl { Width = 340, Margin = new Thickness(4, 0, 4, 0), Padding = new Thickness(0) };
+        var focusedTab = new TabItem { Header = "Focused" };
+        var otherTab = new TabItem { Header = "Other" };
+        tabs.Items.Add(focusedTab);
+        tabs.Items.Add(otherTab);
+        var listArea = new DockPanel();
+        if (withTabs) { DockPanel.SetDock(tabs, Dock.Top); tabs.Height = 30; listArea.Children.Add(tabs); }
+        listArea.Children.Add(listGrid);
         DockPanel.SetDock(listArea, Dock.Left);
         middle.Children.Add(folders);
         middle.Children.Add(listArea);
@@ -91,8 +109,10 @@ internal static class OutlookHost
         };
 
         List<Mail> showing = [];
+        bool filled = false;
         void Fill(IEnumerable<Mail> mails)
         {
+            filled = true;
             showing = mails.ToList();
             list.Items.Clear();
             foreach (var m in showing)
@@ -123,6 +143,14 @@ internal static class OutlookHost
             body.Document.Blocks.Add(new System.Windows.Documents.Paragraph(new System.Windows.Documents.Run(m.Preview + "\n\nVenlig hilsen\n" + m.From)));
         }
         list.SelectionChanged += (_, _) => Open(list.SelectedIndex);
+        var tabsSeen = new List<string>();
+        tabs.SelectionChanged += (_, e) =>
+        {
+            if (!ReferenceEquals(e.OriginalSource, tabs) || !filled) return; // not the first selection while the window opens
+            bool other = tabs.SelectedItem == otherTab;
+            lock (keys) tabsSeen.Add(other ? "Other" : "Focused");
+            Fill(other ? OtherMails : Mails.Take(10));
+        };
         void OpenReply() { reply.Visibility = Visibility.Visible; reply.Focus(); }
         window.PreviewKeyDown += (_, e) =>
         {
@@ -191,13 +219,14 @@ internal static class OutlookHost
                             opened = "";
                             search.Text = "";
                             list.SelectedIndex = -1;
-                            lock (keys) { keys.Clear(); searches.Clear(); }
+                            lock (keys) { keys.Clear(); searches.Clear(); tabsSeen.Clear(); }
+                            if (withTabs && tabs.SelectedItem != focusedTab) { filled = false; tabs.SelectedItem = focusedTab; Fill(Mails.Take(10)); }
                             if (showing.Count > 0 && showing.Count != 10) Fill(Mails.Take(10));
                             break;
                         case "busy": busy = int.Parse(arg); break;
                         case "state":
                             lock (keys)
-                                answer = JsonSerializer.Serialize(new { opened, reply = reply.Text, replyOpen = reply.Visibility == Visibility.Visible, sent, enterElsewhere, keys = keys.ToArray(), searches = searches.ToArray(), shown = showing.Count, search = search.Text });
+                                answer = JsonSerializer.Serialize(new { opened, reply = reply.Text, replyOpen = reply.Visibility == Visibility.Visible, sent, enterElsewhere, keys = keys.ToArray(), searches = searches.ToArray(), shown = showing.Count, search = search.Text, tabs = tabsSeen.ToArray(), tab = withTabs && tabs.SelectedItem == otherTab ? "Other" : "Focused", selected = list.SelectedIndex });
                             break;
                         case "quit": Application.Current.Shutdown(); break;
                     }

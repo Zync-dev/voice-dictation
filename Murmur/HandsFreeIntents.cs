@@ -235,7 +235,7 @@ public static class ScreenPrompts
         { "slack", "ms-teams", "teams", "discord", "messenger", "whatsapp", "signal", "telegram" };
 
     internal static bool IsChat(ActiveWindowInfo app) =>
-        ChatApps.Contains(app.Process) || app.Title.Contains("Messenger", StringComparison.OrdinalIgnoreCase) || app.Title.Contains("WhatsApp", StringComparison.OrdinalIgnoreCase);
+        ChatApps.Contains(app.Process) || AppProfiles.Match(app.Process, app.Title) is { IsChat: true } || app.Title.Contains("Messenger", StringComparison.OrdinalIgnoreCase) || app.Title.Contains("WhatsApp", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The user's sign-off: the expansion of a snippet named like a signature ("my email signature", "min signatur").</summary>
     internal static string? Signature(AppSettings s) =>
@@ -338,25 +338,34 @@ public static class ScreenPrompts
 /// </summary>
 public static class ReplyTargets
 {
-    public sealed record Target(string Name, Func<ActiveWindowInfo, bool> Matches, ushort Modifier, ushort Key, string Label, bool Browser = false);
+    public sealed record Target(string Name, Func<ActiveWindowInfo, bool> Matches, ushort Modifier, ushort Key, string Label, bool Browser = false)
+    {
+        /// <summary>The app profile the shortcut came from (AppProfiles.json), for the memory of what worked; null for the checks' own.</summary>
+        public AppProfile? Profile { get; init; }
+        public string Method { get; init; } = "";
+    }
 
-    private static readonly HashSet<string> Browsers = new(StringComparer.OrdinalIgnoreCase)
-        { "chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "arc", "chromium" };
+    public static bool IsBrowser(ActiveWindowInfo app) => AppProfiles.IsBrowser(app.Process);
 
-    public static bool IsBrowser(ActiveWindowInfo app) => Browsers.Contains(app.Process);
+    /// <summary>
+    /// The developer checks add their own test windows' reply shortcuts here. Real apps' shortcuts come from their profile
+    /// (AppProfiles.json: Ctrl+R in new and classic Outlook, Outlook on the web and Thunderbird; R in Gmail, whose
+    /// single-key shortcuts must be on in Gmail's settings, else the draft stays on the card).
+    /// </summary>
+    public static readonly List<Target> Known = [];
 
-    /// <summary>Known reply shortcuts. The developer checks add their own test window here.</summary>
-    public static readonly List<Target> Known =
-    [
-        new("Outlook", a => a.Process.Equals("outlook", StringComparison.OrdinalIgnoreCase), (ushort)Native.VK_CONTROL, (ushort)'R', "Ctrl+R"),
-        new("Outlook", a => a.Process.Equals("olk", StringComparison.OrdinalIgnoreCase), (ushort)Native.VK_CONTROL, (ushort)'R', "Ctrl+R"),
-        new("Thunderbird", a => a.Process.Equals("thunderbird", StringComparison.OrdinalIgnoreCase), (ushort)Native.VK_CONTROL, (ushort)'R', "Ctrl+R"),
-        new("Outlook", a => IsBrowser(a) && a.Title.Contains("Outlook", StringComparison.OrdinalIgnoreCase), (ushort)Native.VK_CONTROL, (ushort)'R', "Ctrl+R", Browser: true),
-        // Gmail's single-key shortcuts must be on in Gmail's settings; if R opens nothing, the draft stays on the card.
-        new("Gmail", a => IsBrowser(a) && a.Title.Contains("Gmail", StringComparison.OrdinalIgnoreCase), 0, (ushort)'R', "R", Browser: true),
-    ];
+    /// <summary>The reply shortcuts for an app: the checks' own first, else its profile's, in the order the memory of what worked says.</summary>
+    public static List<Target> For(ActiveWindowInfo app, AppSettings settings, out string note)
+    {
+        note = "";
+        if (Known.FirstOrDefault(t => t.Matches(app)) is { } test) return [test];
+        var list = AppProfiles.ReplyTargetsFor(app);
+        if (list.Count == 0) return list;
+        var order = AppMemory.Order(settings, app.Process, list[0].Profile, "reply", list.Select(t => t.Method).ToList(), out note);
+        return order.Select(m => list.First(t => t.Method == m)).ToList();
+    }
 
-    /// <summary>How long to wait for the reply field after the shortcut.</summary>
+    /// <summary>How long to wait for the reply field after the shortcut (a profile may say longer, for a reply in its own window).</summary>
     private static readonly TimeSpan OpenWait = TimeSpan.FromSeconds(3);
 
     public static async Task DeliverAsync(IIntentHost host, string draft, CancellationToken ct)
@@ -373,28 +382,32 @@ public static class ReplyTargets
             await host.PasteAsync(draft, "Reply pasted, not sent");
             return;
         }
-        var target = Known.FirstOrDefault(t => t.Matches(host.App));
         bool chat = ScreenPrompts.IsChat(host.App);
-        if (target != null && !chat && host.Settings.ReplyOpensReplyField
-            // In a browser the shortcut must reach the page, never the address bar (where Ctrl+R reloads), and R must not be typed into a field.
-            && (!target.Browser || focus is { InWebDocument: true, Editable: false }))
+        string learned = "";
+        var targets = chat || !host.Settings.ReplyOpensReplyField ? [] : For(host.App, host.Settings, out learned);
+        if (targets.Count > 0) AppMemory.LogNote(targets[0].Profile, host.App.Process, learned);
+        foreach (var target in targets)
         {
-            if (await host.PressAsync(target.Modifier, target.Key, target.Label))
+            // In a browser the shortcut must reach the page, never the address bar (where Ctrl+R reloads), and R must not be typed into a field.
+            if (target.Browser && focus is not { InWebDocument: true, Editable: false }) break;
+            if (!await host.PressAsync(target.Modifier, target.Key, target.Label)) break;
+            var wait = target.Profile?.Reply?.WaitMs is int ms ? TimeSpan.FromMilliseconds(ms) : OpenWait;
+            var waited = System.Diagnostics.Stopwatch.StartNew();
+            while (waited.Elapsed < wait)
             {
-                var waited = System.Diagnostics.Stopwatch.StartNew();
-                while (waited.Elapsed < OpenWait)
+                await Task.Delay(150, ct);
+                var now = await ScreenReader.FocusAsync();
+                if (now is { Editable: true, Password: false } && ProcessFamily.Of(ScreenReader.PidOf(host.Window)).Contains(now.ProcessId) && (!browser || now.InWebDocument))
                 {
-                    await Task.Delay(150, ct);
-                    var now = await ScreenReader.FocusAsync();
-                    if (now is { Editable: true, Password: false } && ProcessFamily.Of(ScreenReader.PidOf(host.Window)).Contains(now.ProcessId) && (!browser || now.InWebDocument))
-                    {
-                        await Task.Delay(120, ct); // let the reply field finish opening
-                        await host.PasteAsync(draft, "Reply pasted, not sent");
-                        return;
-                    }
+                    if (target.Profile != null) AppMemory.Record(host.Settings, host.App.Process, target.Profile, "reply", target.Method, AppMemory.Outcome.Worked);
+                    await Task.Delay(120, ct); // let the reply field finish opening
+                    await host.PasteAsync(draft, "Reply pasted, not sent");
+                    return;
                 }
-                Log.Write($"Reply: {target.Label} in {app} opened no text field within {OpenWait.TotalSeconds:0}s");
             }
+            if (target.Profile != null) AppMemory.Record(host.Settings, host.App.Process, target.Profile, "reply", target.Method, AppMemory.Outcome.Failed);
+            Log.Write($"Reply: {target.Label} in {app} opened no text field within {wait.TotalSeconds:0.#}s");
+            focus = await ScreenReader.FocusAsync();
         }
         host.ShowAnswer("Reply draft", draft, chat ? $"  Click into the message box in {app}, then Insert" : $"  Click into the reply field in {app}, then Insert");
     }

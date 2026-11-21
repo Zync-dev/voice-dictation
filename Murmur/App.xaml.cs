@@ -57,6 +57,8 @@ public partial class App : Application
         base.OnStartup(e);
         if (HandleSetupSwitches(e.Args)) return; // installer, updates and first run: developer switches (App.Setup.cs)
 
+        AppMemory.ForTestRun(e.Args); // App profiles and memory: checks that drive tasks start with a fresh memory (AppMemory.cs)
+        if (ProfileTests.TryRun(this, e.Args)) return; // App profiles and memory: --profiletest (ProfileTests.cs)
         if (LearningTests.TryRun(this, e.Args)) return; // Learning and context: developer checks
         if (HandsFreeTests.TryRun(this, e.Args)) return; // Hands-free: --routertest, --screentest (HandsFreeTests.cs)
         if (ControlTests.TryRun(this, e.Args)) return; // Hands-free computer control: --controltest (ControlTests.cs)

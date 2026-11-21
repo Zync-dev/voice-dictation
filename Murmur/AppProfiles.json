@@ -1,0 +1,280 @@
+/*
+  App profiles (AppProfiles.cs). How Murmur's tasks find their way around the apps people use most.
+  Embedded in Murmur.exe. More profiles, or a changed copy of one, can go in "app-profiles.json" in the data folder
+  (same shape, a "profiles" list): a profile there with the same "id" replaces the built-in one, a new id is added
+  in front of the built-in ones. Comments and trailing commas are allowed.
+
+  Schema of one profile (every field but "id", "name" and "match" may be left out):
+    id          string, unique, lower case: "outlook-new"
+    name        the app's name on the card and in the log: "Outlook"
+    kind        "mail" | "chat" | "browser" | "document" | "editor" | "terminal" | "files" | "other"
+                (a "browser" profile only says how the browser itself behaves; a page in it with no profile of its own is
+                treated as today: a mail app when its title looks like one)
+    match       how the window is recognised. The first profile that matches wins, so web apps come before browsers.
+                  processes  exe names without ".exe", any case: ["olk"]
+                  browser    true: the window must be one of the browsers below (a web app), and "title" must match
+                  title      a regular expression (case ignored) the window title must match
+    ready       what "loaded" looks like after the app was opened or brought forward:
+                  "mail-rows"  the message list's rows (items with a time or date) are there and their number stays
+                  "list-rows"  list or table rows are there (a chat's message or conversation list)
+                  "document"   the page or document has filled in (as "generic": a document if there is one, else controls)
+                  "generic"    the default: a document if there is one, else any controls, and stable over two looks
+    loadSeconds how long to wait for that when the app was open already (default 4; a mail app 8)
+    items       how to find items (open_item):
+                  lists           automation ids of the list that holds the rows: ["MailList"]. Used to scroll the list
+                                  when no row in view has a time or date.
+                  scrollSettleMs  how long a scroll may take to report its new position (a web app reports it late)
+    tabs        inbox tabs to look in when an item is not in view:
+                  primary    the tab the list starts on: ["Focused", "Prioriteret"]
+                  secondary  the other tabs, looked in one after the other, then back to the primary: ["Other", "Andet"]
+    find        the order of the ways to look for an item that is not in view: "scroll", "tabs", "search".
+                (default ["scroll", "tabs", "search"]; what worked before is tried first, see AppMemory.cs)
+    search      the ways to put the focus in the app's search box, in order (empty: the app has none Murmur can use):
+                  "box"        a text box named "Search" / "Søg" (no keys pressed)
+                  "key:<keys>" the app's search key, for example "key:Ctrl+E", "key:Alt+Q", "key:F3"
+                  "click"      a control named "Search" / "Søg" that opens the box
+    reply       keys         the reply shortcut(s), tried in order until a text field gets the focus: ["Ctrl+R"]
+                field        where the reply field shows up: "inline" (in the reading pane), "window" (its own window),
+                             "message-box" (a chat: the message box is the reply field)
+                waitMs       how long to wait for it after the key (default 3000)
+                inPage       true: only while the focus is in the page itself, never in the browser's address bar
+    send        the key that sends a written reply or message (only after a yes on the card): "Ctrl+Enter", "Enter"
+    messageBox  names of a chat's message box, for "click into the message box": ["Message", "Besked"]
+    quirks      notes for people and for the log: "webview2" (content in a msedgewebview2 child process),
+                "delayed-scroll" (the scroll position updates late), "no-search-box" (its search is not exposed to UI
+                Automation and no key focuses it), "single-key-shortcuts" (needs the app's keyboard shortcuts on)
+  Keys are written as "Ctrl+Shift+R": Ctrl, Alt, Shift, then a letter, digit, Enter, Esc, Tab, F1-F12.
+*/
+{
+  "version": 1,
+  "browsers": ["msedge", "chrome", "firefox", "brave", "opera", "vivaldi", "arc", "chromium", "iexplore"],
+  "profiles": [
+    {
+      "id": "outlook-web",
+      "name": "Outlook",
+      "kind": "mail",
+      "match": { "browser": true, "title": "(?:^|[-–—|]\\s*)Outlook(?:\\s*$|\\s*[-–—|(])" },
+      "ready": "mail-rows",
+      "loadSeconds": 8,
+      "items": { "lists": ["MailList"], "scrollSettleMs": 1500 },
+      "tabs": { "primary": ["Focused", "Prioriteret", "Fokuseret"], "secondary": ["Other", "Andet", "Andre"] },
+      "search": ["box", "key:Alt+Q", "key:Ctrl+E", "key:F3", "click"],
+      "reply": { "keys": ["Ctrl+R"], "field": "inline", "inPage": true },
+      "send": "Ctrl+Enter",
+      "quirks": ["delayed-scroll"]
+    },
+    {
+      "id": "gmail",
+      "name": "Gmail",
+      "kind": "mail",
+      "match": { "browser": true, "title": "(?:^|[-–—|]\\s*)Gmail(?:\\s*$|\\s*[-–—|])" },
+      "ready": "mail-rows",
+      "loadSeconds": 8,
+      "tabs": { "primary": ["Primary", "Primær"], "secondary": ["Promotions", "Social", "Updates", "Forums", "Kampagner", "Socialt", "Opdateringer", "Fora"] },
+      "search": ["box", "click"],
+      "reply": { "keys": ["R"], "field": "inline", "inPage": true },
+      "send": "Ctrl+Enter",
+      "quirks": ["single-key-shortcuts"]
+    },
+    {
+      "id": "slack-web",
+      "name": "Slack",
+      "kind": "chat",
+      "match": { "browser": true, "title": "(?:^|[-–—|]\\s*)Slack(?:\\s*$|\\s*[-–—|])" },
+      "ready": "list-rows",
+      "search": ["box", "click"],
+      "reply": { "field": "message-box", "inPage": true },
+      "send": "Enter",
+      "messageBox": ["Message", "Besked", "Send a message", "Skriv en besked"]
+    },
+    {
+      "id": "teams-web",
+      "name": "Teams",
+      "kind": "chat",
+      "match": { "browser": true, "title": "Microsoft Teams" },
+      "ready": "list-rows",
+      "search": ["box", "click"],
+      "reply": { "field": "message-box", "inPage": true },
+      "send": "Enter",
+      "messageBox": ["Type a message", "Type a new message", "Skriv en meddelelse", "Skriv en ny meddelelse"]
+    },
+    {
+      "id": "whatsapp-web",
+      "name": "WhatsApp",
+      "kind": "chat",
+      "match": { "browser": true, "title": "WhatsApp" },
+      "ready": "list-rows",
+      "reply": { "field": "message-box", "inPage": true },
+      "send": "Enter"
+    },
+    {
+      "id": "messenger-web",
+      "name": "Messenger",
+      "kind": "chat",
+      "match": { "browser": true, "title": "Messenger" },
+      "ready": "list-rows",
+      "reply": { "field": "message-box", "inPage": true },
+      "send": "Enter"
+    },
+    {
+      "id": "outlook-new",
+      "name": "Outlook",
+      "kind": "mail",
+      "match": { "processes": ["olk"] },
+      "ready": "mail-rows",
+      "loadSeconds": 8,
+      "items": { "lists": ["MailList"], "scrollSettleMs": 1500 },
+      "tabs": { "primary": ["Focused", "Prioriteret", "Fokuseret"], "secondary": ["Other", "Andet", "Andre"] },
+      "find": ["scroll", "tabs"],
+      "search": [],
+      "reply": { "keys": ["Ctrl+R"], "field": "inline" },
+      "send": "Ctrl+Enter",
+      "quirks": ["webview2", "delayed-scroll", "no-search-box"]
+    },
+    {
+      "id": "outlook-classic",
+      "name": "Outlook",
+      "kind": "mail",
+      "match": { "processes": ["outlook"] },
+      "ready": "mail-rows",
+      "loadSeconds": 8,
+      "tabs": { "primary": ["Focused", "Prioriteret", "Fokuseret"], "secondary": ["Other", "Andet", "Andre"] },
+      "search": ["box", "key:Ctrl+E", "key:F3", "click"],
+      "reply": { "keys": ["Ctrl+R"], "field": "window", "waitMs": 4000 },
+      "send": "Ctrl+Enter"
+    },
+    {
+      "id": "thunderbird",
+      "name": "Thunderbird",
+      "kind": "mail",
+      "match": { "processes": ["thunderbird"] },
+      "ready": "mail-rows",
+      "loadSeconds": 8,
+      "search": ["box", "click"],
+      "reply": { "keys": ["Ctrl+R"], "field": "window" },
+      "send": "Ctrl+Enter"
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "kind": "chat",
+      "match": { "processes": ["slack"] },
+      "ready": "list-rows",
+      "search": ["box", "click"],
+      "reply": { "field": "message-box" },
+      "send": "Enter",
+      "messageBox": ["Message", "Besked", "Send a message", "Skriv en besked"],
+      "quirks": ["electron"]
+    },
+    {
+      "id": "teams",
+      "name": "Teams",
+      "kind": "chat",
+      "match": { "processes": ["ms-teams", "teams"] },
+      "ready": "list-rows",
+      "search": ["box", "key:Ctrl+E", "click"],
+      "reply": { "field": "message-box" },
+      "send": "Enter",
+      "messageBox": ["Type a message", "Type a new message", "Skriv en meddelelse", "Skriv en ny meddelelse"],
+      "quirks": ["webview2"]
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "kind": "chat",
+      "match": { "processes": ["discord"] },
+      "ready": "list-rows",
+      "reply": { "field": "message-box" },
+      "send": "Enter",
+      "quirks": ["electron"]
+    },
+    {
+      "id": "whatsapp",
+      "name": "WhatsApp",
+      "kind": "chat",
+      "match": { "processes": ["whatsapp", "whatsapp.root"] },
+      "ready": "list-rows",
+      "reply": { "field": "message-box" },
+      "send": "Enter",
+      "quirks": ["webview2"]
+    },
+    {
+      "id": "messenger",
+      "name": "Messenger",
+      "kind": "chat",
+      "match": { "processes": ["messenger"] },
+      "ready": "list-rows",
+      "reply": { "field": "message-box" },
+      "send": "Enter"
+    },
+    {
+      "id": "edge",
+      "name": "Edge",
+      "kind": "browser",
+      "match": { "processes": ["msedge"] },
+      "search": ["box", "click"]
+    },
+    {
+      "id": "chrome",
+      "name": "Chrome",
+      "kind": "browser",
+      "match": { "processes": ["chrome", "chromium", "brave"] },
+      "search": ["box", "click"]
+    },
+    {
+      "id": "firefox",
+      "name": "Firefox",
+      "kind": "browser",
+      "match": { "processes": ["firefox"] },
+      "search": ["box", "click"]
+    },
+    {
+      "id": "word",
+      "name": "Word",
+      "kind": "document",
+      "match": { "processes": ["winword"] },
+      "ready": "document",
+      "search": []
+    },
+    {
+      "id": "excel",
+      "name": "Excel",
+      "kind": "document",
+      "match": { "processes": ["excel"] },
+      "ready": "document",
+      "search": []
+    },
+    {
+      "id": "vscode",
+      "name": "VS Code",
+      "kind": "editor",
+      "match": { "processes": ["code", "code - insiders", "cursor", "windsurf"] },
+      "ready": "document",
+      "search": [],
+      "quirks": ["electron"]
+    },
+    {
+      "id": "terminal",
+      "name": "Terminal",
+      "kind": "terminal",
+      "match": { "processes": ["windowsterminal", "wt", "cmd", "powershell", "pwsh", "conhost"] },
+      "search": []
+    },
+    {
+      "id": "notepad",
+      "name": "Notepad",
+      "kind": "editor",
+      "match": { "processes": ["notepad"] },
+      "ready": "document",
+      "search": []
+    },
+    {
+      "id": "explorer",
+      "name": "File Explorer",
+      "kind": "files",
+      "match": { "processes": ["explorer"], "title": "\\S" },
+      "ready": "list-rows",
+      "search": ["box"]
+    }
+  ]
+}

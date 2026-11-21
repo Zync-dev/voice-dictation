@@ -684,7 +684,8 @@ public static class UiControl
     /// Scrolls the scrollable part that holds <paramref name="inside"/> (a row of a list), through UI Automation only:
     /// the mouse does not move and nothing is selected. Null when nothing around it scrolls.
     /// </summary>
-    public static Task<ScrollResult?> ScrollAroundAsync(AutomationElement inside, Scroll how) => Worker.RunAsync(() =>
+    /// <remarks><paramref name="settleMs"/>: how long to wait for the new position (an app's profile may say; default ~1 s).</remarks>
+    public static Task<ScrollResult?> ScrollAroundAsync(AutomationElement inside, Scroll how, int settleMs = 1000) => Worker.RunAsync(() =>
     {
         var walker = TreeWalker.ControlViewWalker;
         AutomationElement? target = null;
@@ -703,13 +704,13 @@ public static class UiControl
         }
         // Web apps (new Outlook) report the new position only a moment later: wait for it to change (up to ~1 s).
         double after = sp.Current.VerticalScrollPercent;
-        for (int i = 0; i < 10 && Math.Abs(after - before) < 0.01; i++)
+        for (int i = 0; i < Math.Max(1, settleMs / 100) && Math.Abs(after - before) < 0.01; i++)
         {
             Thread.Sleep(100);
             after = sp.Current.VerticalScrollPercent;
         }
         return new ScrollResult(true, before, after, "");
-    }, BudgetMs);
+    }, Math.Max(BudgetMs, settleMs + 1000));
 
     private static bool Scrolls(AutomationElement e)
     {

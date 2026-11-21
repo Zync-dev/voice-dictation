@@ -711,6 +711,31 @@
                 </Border>
                 <!-- ==== end Hands-free: multi-step tasks ==== -->
 
+                <!-- ==== App profiles and memory of what worked (MainWindow.AppMemory.cs) ==== -->
+                <TextBlock x:Name="AppMemoryHeading" Style="{StaticResource SectionHeading}" Text="What Murmur learns about apps"/>
+                <Border Style="{StaticResource SettingsCard}">
+                    <StackPanel>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Remember what worked in each app"/>
+                                <TextBlock Style="{StaticResource RowHelp}" Text="When a task finds a mail by scrolling, in the Other tab or with the app's search, or opens the reply field with a shortcut, Murmur tries that way first next time and skips ways that keep failing. Only the way is kept, on this PC, never what was on the screen."/>
+                            </StackPanel>
+                            <CheckBox x:Name="AppMemoryEnabledBox" Grid.Column="1" Click="AppMemorySetting_Changed" AutomationProperties.Name="Remember what worked in each app"/>
+                        </Grid>
+                        <Border Style="{StaticResource RowLine}"/>
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Style="{StaticResource Label}" Text="Reset what Murmur learned about apps"/>
+                                <TextBlock x:Name="AppMemoryHelp" Style="{StaticResource RowHelp}" Text="Murmur has not learned anything yet."/>
+                            </StackPanel>
+                            <Button x:Name="AppMemoryResetButton" Grid.Column="1" Style="{StaticResource BtnGhost}" VerticalAlignment="Center" Content="Reset" Click="AppMemoryReset_Click" AutomationProperties.Name="Reset what Murmur learned about apps"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+                <!-- ==== end App profiles and memory ==== -->
+
                 <!-- Microphone and language -->
                 <TextBlock Style="{StaticResource SectionHeading}" Text="Microphone and language"/>
                 <Border Style="{StaticResource SettingsCard}">
