@@ -1,0 +1,240 @@
+Murmur --uia-shape olk  (2026-11-21 05.11); no text from the app is written here, only lengths and flags.
+
+=== window 1 of 1: app name "Outlook", title length 31, class Outlook Host ===
+first walk: 234 elements in 152 ms, depth 18, 1 documents, 15 list/tree/table items, 7 names with a time or date, 0 password fields, 0 elements that did not answer; by type: Group 83, Button 48, Text 34, Image 14, Pane 12, TreeItem 9, CheckBox 7, ListItem 6, TabItem 5, ToolBar 3, StatusBar 3, Tab 2, Window 1, Document 1
+second walk, 4 s later: 234 elements in 104 ms, depth 18, 1 documents, 15 list/tree/table items, 7 names with a time or date, 0 password fields, 0 elements that did not answer; by type: Group 83, Button 48, Text 34, Image 14, Pane 12, TreeItem 9, CheckBox 7, ListItem 6, TabItem 5, ToolBar 3, StatusBar 3, Tab 2, Window 1, Document 1
+legend: depth, ControlType, class, aid=automation id, name=<length>[,<parts> parts][,time][,date], kids=<children>, patterns I=Invoke S=SelectionItem(sel = selected) E=ExpandCollapse T=Toggle V=Value X=Text G=Grid, off=offscreen, focusable, disabled
+0 Window class=Outlook Host name=31 kids=5 focusable
+  1 ToolBar class=WebViewCaptionButton name=15 kids=3
+    2 Button name=8 kids=0 I
+    2 Button name=8 kids=0 I
+    2 Button name=5 kids=0 I
+  1 Pane class=WebViewTopBorder kids=0
+  1 Pane class=Chrome_WidgetWin_0 kids=0
+  1 Pane class=Chrome_WidgetWin_1 name=31 kids=2
+    2 Pane class=Intermediate D3D Window kids=0 disabled
+    2 Pane class=RootView name=45 kids=1
+      3 Pane class=NonClientView kids=2
+        4 Pane class=EmbeddedBrowserTabRootView kids=0 focusable
+        4 Pane class=NativeFrameView kids=1
+          5 Pane class=ClientView kids=2
+            6 Document aid=RootWebArea name=31 kids=1 VX focusable
+              7 Pane class=ms-font-s disableTextSelection ms-Fabric--isFocu… kids=10 I
+                8 Group aid=app kids=13 I
+                  9 Hyperlink class=ms-Button ms-Button--default J5ft5 root-101 name=20 kids=0 IV off focusable
+                  9 Group class=OvfwU kids=4 focusable
+                    10 Text name=7 kids=0 X
+                    10 Group class=x8k1J bILyE kids=0
+                    10 Button class=fui-Button r1f29ykk TXRvx oq3St qJDsp ___1j82qye… aid=<31 chars> name=13 kids=0 E focusable
+                    10 Button class=fui-Button r1f29ykk fui-MenuButton TXRvx oq3St _… aid=<28 chars> name=26 kids=0 E focusable
+                  9 Group class=dXcYt kids=0 off
+                  9 Button class=ms-Button ms-Button--icon P7e8Z root-109 aid=windowIconMinimize name=8 kids=0 I focusable
+                  9 Button class=ms-Button ms-Button--icon P7e8Z root-109 aid=windowIconMaximize name=8 kids=0 I focusable
+                  9 Button class=ms-Button ms-Button--icon P7e8Z root-109 aid=windowIconClose name=5 kids=0 I focusable
+                  9 Group class=___1w2h5wn f22iagw f122n59 f17wyjut f1mtd64y f1v… name=16 kids=7
+                    10 Group class=___77lcry0 f10pi13n name=4 kids=1 I
+                      11 Button class=fui-Button r1f29ykk ___a8jegk0 f1brlhvm f10xn8zz… aid=<36 chars> name=4 kids=1 T focusable
+                        12 Image name=4 kids=0
+                    10 Group class=___77lcry0 f10pi13n name=8 kids=1 I
+                      11 Button class=fui-Button r1f29ykk ___1c1syfs f1brlhvm f10xn8zz… aid=<36 chars> name=8 kids=1 T focusable
+                        12 Image name=8 kids=0
+                    10 Group class=___77lcry0 f10pi13n name=6 kids=1 I
+                      11 Button class=fui-Button r1f29ykk ___1c1syfs f1brlhvm f10xn8zz… aid=<36 chars> name=6 kids=1 T focusable
+                        12 Image name=6 kids=0
+                    10 Group class=___77lcry0 f10pi13n name=4 kids=1 I
+                      11 Button class=fui-Button r1f29ykk ___1c1syfs f1brlhvm f10xn8zz… aid=<36 chars> name=4 kids=1 T focusable
+                        12 Image name=4 kids=0
+                    10 Group class=___77lcry0 f10pi13n name=5 kids=1 I
+                      11 Button class=fui-Button r1f29ykk ___1c1syfs f1brlhvm f10xn8zz… aid=<36 chars> name=5 kids=1 T focusable
+                        12 Image name=5 kids=0
+                    10 Group class=___77lcry0 f10pi13n name=10 kids=1 I
+                      11 Button class=fui-Button r1f29ykk ___1c1syfs f1brlhvm f10xn8zz… aid=<36 chars> name=10 kids=1 T focusable
+                        12 Image name=10 kids=0
+                    10 StatusBar aid=DndLiveRegion-0 kids=0 off
+                  9 Group class=___77lcry0 f10pi13n name=9 kids=1
+                    10 Button class=fui-Button r1f29ykk ___1kuryou f18ktai2 f12clzc2… name=9 kids=0 E focusable
+                  9 Group class=___1tnzhvr fd9q35j f1mthdoh fj25m7a f11tvi3n fab… name=6 kids=5 focusable
+                    10 Button class=fui-Button r1f29ykk ___115c2ep f1c21dwh f1p3nwhy… name=20 kids=0 I focusable
+                    10 Button class=fui-Button r1f29ykk ___1sc6jkt f1c21dwh f1p3nwhy… aid=menu_r_4o_ name=4 kids=0 E focusable
+                    10 ToolBar class=css-113 kids=1 focusable
+                      11 Tab class=fui-TabList ___8n9zdb0 f22iagw f1063pyq fi64zpg … aid=tablist name=11 kids=3 focusable
+                        12 TabItem class=pivot-header-root fui-Tab ___gybajp0 f38a7jb fmn… aid=1 name=4 kids=0 S(sel) focusable
+                        12 TabItem class=pivot-header-root fui-Tab ___1n1jw41 f38a7jb fmn… aid=3 name=4 kids=0 S focusable
+                        12 TabItem class=pivot-header-root fui-Tab ___1n1jw41 f38a7jb fmn… aid=<5 chars> name=4 kids=0 S focusable
+                    10 ToolBar class=___bdo9y40 f1k2sg7s f1mk8lai outerContainer-120 kids=1 focusable
+                      11 Pane class=root-121 bottomBarContainer aid=1-tabpanel name=4 kids=10
+                        12 Group class=root-134 aid=116-group name=3 kids=2
+                          13 Group class=fui-SplitButton ___mf7y0j0 ftuwxu6 fsxf2b5 f10pi… aid=588 kids=2
+                            14 Button class=fui-Button r1f29ykk ms-Button ms-ButtonNext fui-… name=3 kids=0 I focusable
+                            14 Button class=fui-Button r1f29ykk fui-MenuButton ms-Button ms-… name=31 kids=1 E focusable
+                              15 Text name=3 kids=0 X
+                          13 Text name=3 kids=0 X
+                        12 Group class=root-134 aid=104-group name=6 kids=3
+                          13 Button class=fui-Button r1f29ykk ms-Button ms-ButtonNext ___p… aid=519 name=6 kids=0 I focusable disabled
+                          13 Button class=fui-Button r1f29ykk ms-Button ms-ButtonNext ___p… aid=505 name=7 kids=0 I focusable disabled
+                          13 Text name=6 kids=0 X
+                        12 Group class=root-134 aid=197-group name=6 kids=2
+                          13 Button class=fui-Button r1f29ykk ms-Button ms-ButtonNext ___p… aid=535 name=11 kids=0 I focusable disabled
+                          13 Text name=6 kids=0 X
+                        12 Group class=root-134 aid=121-group name=7 kids=2
+                          13 Group class=fui-SplitButton ___kvnntg0 ftuwxu6 fsxf2b5 f10pi… aid=678 kids=2
+                            14 Button class=fui-Button r1f29ykk ms-Button ms-ButtonNext fui-… name=9 kids=0 I focusable disabled
+                            14 Button class=fui-Button r1f29ykk fui-MenuButton ms-Button ms-… name=35 kids=2 E focusable disabled
+                              15 Text name=5 kids=0 X
+                              15 Text name=3 kids=0 X
+                          13 Text name=7 kids=0 X
+                        12 Group class=root-134 aid=113-group name=4 kids=2
+                          13 Button class=fui-Button r1f29ykk fui-MenuButton ms-Button ms-… aid=540 name=4 kids=2 E focusable disabled
+                            14 Text name=4 kids=0 X
+                            14 Text name=27 kids=0 X
+                          13 Text name=4 kids=0 X
+                        12 Group class=root-134 aid=128-group name=4 kids=5
+                          13 Button class=fui-Button r1f29ykk ms-Button ms-ButtonNext ___1… aid=552 name=16 kids=0 I focusable
+                          13 Button class=fui-Button r1f29ykk fui-MenuButton ms-Button ms-… aid=509 name=10 kids=2 E focusable disabled
+                            14 Text name=10 kids=0 X
+                            14 Text name=116 kids=0 X
+                          13 Group class=fui-SplitButton ___kvnntg0 ftuwxu6 fsxf2b5 f10pi… aid=527 kids=2
+                            14 Button class=fui-Button r1f29ykk ms-Button ms-ButtonNext fui-… name=4 kids=0 I focusable disabled
+                            14 Button class=fui-Button r1f29ykk fui-MenuButton ms-Button ms-… name=27 kids=1 E focusable disabled
+                              15 Text name=4 kids=0 X
+                          13 Button class=fui-Button r1f29ykk fui-MenuButton ms-Button ms-… aid=571 name=6 kids=2 E focusable disabled
+                            14 Text name=6 kids=0 X
+                            14 Text name=37 kids=0 X
+                          13 Text name=4 kids=0 X
+                        12 Group class=root-134 aid=118-group name=5 kids=2
+                          13 Button class=fui-Button r1f29ykk ms-Button ms-ButtonNext ___p… aid=549 name=5 kids=0 I focusable disabled
+                          13 Text name=5 kids=0 X
+                        12 Group class=root-134 aid=108-group name=4 kids=2
+                          13 Button class=fui-Button r1f29ykk ms-Button ms-ButtonNext ___1… aid=508 name=15 kids=0 I focusable
+                          13 Text name=4 kids=0 X
+                        12 Group class=root-134 aid=130-group name=4 kids=2
+                          13 Button class=fui-Button r1f29ykk ms-Button ms-ButtonNext ___p… aid=580 name=4 kids=0 I focusable disabled
+                          13 Text name=4 kids=0 X
+                        12 Button class=fui-Button r1f29ykk ms-Button ms-ButtonNext ms-R… aid=RibbonModeToggle name=14 kids=0 I focusable
+                    10 Group kids=0 I
+                  9 Group class=Yd48r css-151 name=15 kids=2 focusable
+                    10 Tree class=qQbyL kids=4
+                      11 Text class=screenReaderOnly name=15 kids=0
+                      11 TreeItem class=C2IG3 h61nw JgcQF LPIso EtZQr oTkSL fP63B phvtt aid=<55 chars> name=14 kids=0 E focusable
+                      11 Group kids=1
+                        12 Group name=14 kids=7
+                          13 TreeItem class=C2IG3 ToDFk JgcQF LPIso EtZQr oTkSL QreOD phvtt … name=25 kids=0 S(sel)E focusable
+                          13 TreeItem class=C2IG3 ToDFk JgcQF LPIso EtZQr oTkSL QreOD phvtt … name=21 kids=0 SE focusable
+                          13 TreeItem class=C2IG3 ToDFk JgcQF LPIso EtZQr oTkSL QreOD phvtt … name=16 kids=0 SE focusable
+                          13 TreeItem class=C2IG3 ToDFk JgcQF LPIso EtZQr oTkSL QreOD phvtt … name=10 kids=0 SE focusable
+                          13 TreeItem class=C2IG3 ToDFk JgcQF LPIso EtZQr oTkSL QreOD phvtt … name=22 kids=0 SE focusable
+                          13 TreeItem class=C2IG3 ToDFk JgcQF LPIso EtZQr oTkSL QreOD phvtt … name=7 kids=0 SE focusable
+                          13 TreeItem class=C2IG3 ToDFk JgcQF LPIso EtZQr oTkSL QreOD phvtt … name=6 kids=0 SE focusable
+                      11 TreeItem class=C2IG3 h61nw JgcQF LPIso EtZQr oTkSL fP63B phvtt name=11 kids=0 E focusable
+                    10 StatusBar kids=0
+                  9 Group class=zzOrI t1VdD lKhXQ kids=0 focusable
+                  9 Group class=HOVUa kids=4 focusable
+                    10 Group class=LyMTI Varvg qX6hl C1EJK DtGia Tbbce css-153 aid=Skip to message list-region name=12 kids=8 focusable
+                      11 CheckBox class=input-156 aid=checkbox-36 name=19 kids=0 TV focusable
+                      11 Tab class=fui-TabList RDGUB K_Q7X ___8n9zdb0 f22iagw f1063… kids=2
+                        12 TabItem class=fui-Tab US2jH ___xfjz3i0 f122n59 f3bhgqh ft85np5… name=7 kids=0 S(sel) focusable
+                        12 TabItem class=fui-Tab US2jH ___vab22l0 f122n59 f3bhgqh ft85np5… name=5 kids=0 S focusable
+                      11 Button class=fui-Button r1f29ykk NBXW3 pXS74 eVSfn ___1j82qye… name=7 kids=0 E focusable
+                      11 Button class=fui-Button r1f29ykk fui-MenuButton MnAha M1fEQ c… aid=mailListFilterMenu name=6 kids=0 E focusable
+                      11 Button class=fui-Button r1f29ykk fui-MenuButton EzCrC zNV5X c… aid=mailListSortMenu name=15 kids=0 E focusable
+                      11 Button class=cFTRZ Ls4b8 aJ3Jj oaecg EGJMx cFDUn IBFua name=161 kids=0 I focusable
+                      11 Group class=Cz7T5 AIYu4 aid=MailList kids=1 focusable
+                        12 List class=Cz7T5 name=38 kids=1 V focusable
+                          13 Group class=customScrollBar jEpCF xiVm4 kids=7 focusable
+                            14 Group class=dOD_h lHRXq iIsOF OXL_K UWKUc rqCML YmHO2 DLvHz kids=8 I
+                              15 Image class=fui-Avatar r81b29z aid=avatar-_r_51_ kids=0
+                              15 Text name=17 kids=0 X
+                              15 Group class=t4nii kids=1 I
+                                16 Text name=2 kids=0 X
+                              15 Button class=ms-Button ms-Button--icon ms-Button--hasMenu E3H… name=17 kids=0 E focusable
+                              15 Text name=24,2 parts kids=0 X
+                              15 Group class=YVHQ3 qq2gS i8LPY _rWRU K3Sti O0ACq kids=1
+                                16 Text name=7,time kids=0 X
+                              15 Text name=88,2 parts kids=0 X
+                              15 Group class=wBMYh kids=0 I
+                            14 ListItem class=jGG6V gDC9O UWKUc aid=<28 chars> name=328,time kids=1 IS focusable
+                              15 Group kids=1
+                                16 Group class=lHRXq hDNlA kids=5 focusable
+                                  17 Button class=Es7y_ name=14 kids=0 I focusable
+                                  17 CheckBox class=XG5Jd WNvBZ TBtad q0f8X XW8cf DoCKv vbEPJ CgGCW name=21 kids=1 TV focusable
+                                    18 Image class=fui-Avatar r81b29z mP9b0 aid=avatar-_r_4r_ kids=0
+                                  17 Group class=YVHQ3 kids=0
+                                  17 Group class=YVHQ3 qq2gS i8LPY _rWRU K3Sti D8iyG kids=0
+                                  17 Group class=wBMYh kids=0 I
+                            14 ListItem class=jGG6V gDC9O UWKUc aid=<28 chars> name=293,4 parts,time kids=1 IS focusable
+                              15 Group kids=1
+                                16 Group class=lHRXq hDNlA kids=5 focusable
+                                  17 Button class=Es7y_ name=14 kids=0 I focusable
+                                  17 CheckBox class=XG5Jd WNvBZ TBtad q0f8X XW8cf DoCKv vbEPJ CgGCW name=21 kids=1 TV focusable
+                                    18 Image class=fui-Avatar r81b29z mP9b0 aid=avatar-_r_4s_ kids=0
+                                  17 Group class=YVHQ3 kids=0
+                                  17 Group class=YVHQ3 qq2gS i8LPY _rWRU K3Sti D8iyG kids=0
+                                  17 Group class=wBMYh kids=0 I
+                            14 ListItem class=jGG6V gDC9O UWKUc aid=<28 chars> name=279,time kids=1 IS focusable
+                              15 Group kids=1
+                                16 Group class=lHRXq hDNlA kids=5 focusable
+                                  17 Button class=Es7y_ name=14 kids=0 I focusable
+                                  17 CheckBox class=XG5Jd WNvBZ TBtad q0f8X XW8cf DoCKv vbEPJ CgGCW name=21 kids=1 TV focusable
+                                    18 Image class=fui-Avatar r81b29z mP9b0 aid=avatar-_r_4t_ kids=0
+                                  17 Group class=YVHQ3 kids=0
+                                  17 Group class=YVHQ3 qq2gS i8LPY _rWRU K3Sti D8iyG kids=0
+                                  17 Group class=wBMYh kids=0 I
+                            14 ListItem class=jGG6V gDC9O UWKUc aid=<28 chars> name=286,time kids=1 IS focusable
+                              15 Group kids=1
+                                16 Group class=lHRXq hDNlA DLvHz kids=5 focusable
+                                  17 Button class=Es7y_ name=12 kids=0 I focusable
+                                  17 CheckBox class=XG5Jd WNvBZ TBtad q0f8X XW8cf DoCKv vbEPJ CgGCW name=21 kids=1 TV focusable
+                                    18 Image class=fui-Avatar r81b29z mP9b0 aid=avatar-_r_4u_ kids=0
+                                  17 Group class=YVHQ3 kids=0
+                                  17 Group class=YVHQ3 qq2gS i8LPY _rWRU K3Sti O0ACq kids=0
+                                  17 Group class=wBMYh kids=0 I
+                            14 ListItem class=jGG6V gDC9O UWKUc aid=<28 chars> name=320,3 parts,time kids=1 IS focusable
+                              15 Group kids=1
+                                16 Group class=lHRXq hDNlA DLvHz kids=5 focusable
+                                  17 Button class=Es7y_ name=12 kids=0 I focusable
+                                  17 CheckBox class=XG5Jd WNvBZ TBtad q0f8X XW8cf DoCKv vbEPJ CgGCW name=21 kids=1 TV focusable
+                                    18 Image class=fui-Avatar r81b29z mP9b0 aid=avatar-_r_4v_ kids=0
+                                  17 Group class=YVHQ3 kids=0
+                                  17 Group class=YVHQ3 qq2gS i8LPY _rWRU K3Sti O0ACq kids=0
+                                  17 Group class=wBMYh kids=0 I
+                            14 ListItem class=jGG6V gDC9O UWKUc aid=<28 chars> name=248,6 parts,time kids=1 IS focusable
+                              15 Group kids=1
+                                16 Group class=lHRXq hDNlA DLvHz kids=5 focusable
+                                  17 Button class=Es7y_ name=12 kids=0 I focusable
+                                  17 CheckBox class=XG5Jd WNvBZ TBtad q0f8X XW8cf DoCKv vbEPJ CgGCW name=21 kids=1 TV focusable
+                                    18 Image class=fui-Avatar r81b29z mP9b0 aid=avatar-_r_50_ kids=0
+                                  17 Group class=YVHQ3 kids=0
+                                  17 Group class=YVHQ3 qq2gS i8LPY _rWRU K3Sti O0ACq kids=0 off
+                                  17 Group class=wBMYh kids=0 I
+                      11 Text class=screenReaderOnly aid=notificationBarText kids=0
+                    10 Group class=zzOrI t1VdD wzILN kids=0 focusable
+                    10 Group class=Mq3cC css-165 aid=Skip to message-region name=12 kids=1 focusable
+                      11 Group class=g_zET kids=1 I
+                        12 Text class=screenReaderOnly aid=notificationBarText kids=0
+                    10 Group class=g0BUg T2d3d kids=1 I
+                      11 Group kids=7 I focusable
+                        12 Text name=26 kids=0 X
+                        12 Text name=1 kids=0 X
+                        12 Text name=1 kids=0 X
+                        12 Text name=1 kids=0 X
+                        12 Text name=1 kids=0 X
+                        12 Text name=1 kids=0 X
+                        12 Image class=tK6LZ root-202 name=4 kids=0
+                  9 StatusBar kids=0
+                8 Group class=___1uxlrft f1euv43f f15twtuk f1vgc2s3 f1e31b4d f… kids=0 I
+                8 Group class=___1uxlrft f1euv43f f15twtuk f1vgc2s3 f1e31b4d f… kids=0 I
+                8 Group class=___1uxlrft f1euv43f f15twtuk f1vgc2s3 f1e31b4d f… kids=0 I
+                8 Group class=___1uxlrft f1euv43f f15twtuk f1vgc2s3 f1e31b4d f… kids=0 I
+                8 Group class=___1uxlrft f1euv43f f15twtuk f1vgc2s3 f1e31b4d f… kids=0 I
+                8 Group class=ms-Fabric ms-Layer-content content-166 kids=0 I
+                8 Group class=___1uxlrft f1euv43f f15twtuk f1vgc2s3 f1e31b4d f… kids=0 I
+                8 Group class=___1uxlrft f1euv43f f15twtuk f1vgc2s3 f1e31b4d f… kids=1 I
+                  9 Group class=QOYVK ki0YS kids=0
+                8 Group aid=lpv kids=0 I off
+            6 Pane class=EmbeddedBrowserDownloadView kids=0
+  1 TitleBar aid=TitleBar name=31 kids=4
+    2 MenuBar aid=SystemMenuBar name=15 kids=1 focusable
+      3 MenuItem aid=Item 1 name=6 kids=0 E focusable
+    2 Button aid=Minimize name=8 kids=0 I off
+    2 Button aid=Maximize name=8 kids=0 I off
+    2 Button aid=Close name=5 kids=0 I off
